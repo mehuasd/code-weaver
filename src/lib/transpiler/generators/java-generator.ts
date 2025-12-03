@@ -178,7 +178,7 @@ export class JavaGenerator {
 
   private generateFunction(node: IRFunction, isStatic = false): string {
     const indent = this.getIndent();
-    const returnType = this.mapType(node.returnType);
+    const returnType = this.mapType(node.returnType, false, true);
     const params = node.params.map(p => `${this.mapType(p.dataType, true)} ${p.name}`).join(', ');
     const staticMod = isStatic ? 'static ' : '';
     
@@ -480,7 +480,7 @@ export class JavaGenerator {
     return `${node.callee}(${args})`;
   }
 
-  private mapType(type: DataType, isParam = false): string {
+  private mapType(type: DataType, isParam = false, isReturnType = false): string {
     const typeMap: Record<string, string> = {
       'int': 'int',
       'float': 'float',
@@ -489,7 +489,7 @@ export class JavaGenerator {
       'string': 'String',
       'bool': 'boolean',
       'void': 'void',
-      'auto': isParam ? 'String' : 'var', // var not allowed in method params
+      'auto': isReturnType ? 'void' : (isParam ? 'String' : 'Object'), // No var for params or returns
     };
     return typeMap[type] || 'Object';
   }
