@@ -238,11 +238,23 @@ export class PythonParser {
     
     const body = this.parseBlock();
     
+    // Infer return type from return statements
+    let returnType: DataType = 'void';
+    for (const stmt of body) {
+      if (stmt.type === 'return') {
+        const retStmt = stmt as IRReturn;
+        if (retStmt.value) {
+          returnType = this.inferType(retStmt.value);
+        }
+        break;
+      }
+    }
+    
     return {
       type: 'function',
       name,
       params,
-      returnType: 'auto',
+      returnType,
       body,
     };
   }

@@ -132,7 +132,7 @@ export class CppGenerator {
   private generateFunction(node: IRFunction): string {
     const indent = this.getIndent();
     const returnType = this.mapType(node.returnType);
-    const params = node.params.map(p => `${this.mapType(p.dataType)} ${p.name}`).join(', ');
+    const params = node.params.map(p => `${this.mapType(p.dataType, true)} ${p.name}`).join(', ');
     
     let code = `${indent}${returnType} ${node.name}(${params}) {\n`;
     
@@ -237,6 +237,26 @@ export class CppGenerator {
   private generateFor(node: IRFor): string {
     const indent = this.getIndent();
     
+    // Handle Python range-style for loops
+    if (node.iterator && node.rangeEnd) {
+      const iterator = node.iterator;
+      const start = node.rangeStart ? this.generateExpression(node.rangeStart) : '0';
+      const end = this.generateExpression(node.rangeEnd);
+      const step = node.rangeStep ? this.generateExpression(node.rangeStep) : '1';
+      
+      let code = `${indent}for (int ${iterator} = ${start}; ${iterator} < ${end}; ${iterator} += ${step}) {\n`;
+      
+      this.indent++;
+      for (const stmt of node.body) {
+        const stmtCode = this.generateNode(stmt);
+        if (stmtCode) code += stmtCode + '\n';
+      }
+      this.indent--;
+      code += `${indent}}`;
+      
+      return code;
+    }
+    
     let init = '';
     if (node.init) {
       if (isIRVariable(node.init)) {
@@ -299,7 +319,19 @@ export class CppGenerator {
     let code = `${indent}cout`;
     
     for (const arg of node.args) {
-      code += ` << ${this.generateExpression(arg)}`;
+      if (isIRLiteral(arg) && arg.dataType === 'string') {
+        // Parse f-string interpolation
+        const parts = this.parseFString(String(arg.value));
+        for (const part of parts) {
+          if (part.isVar) {
+            code += ` << ${part.value}`;
+          } else if (part.value) {
+            code += ` << "${part.value}"`;
+          }
+        }
+      } else {
+        code += ` << ${this.generateExpression(arg)}`;
+      }
     }
     
     if (node.newline) {
@@ -308,6 +340,27 @@ export class CppGenerator {
     
     code += ';';
     return code;
+  }
+  
+  private parseFString(str: string): { value: string; isVar: boolean }[] {
+    const parts: { value: string; isVar: boolean }[] = [];
+    const regex = /\{([^}]+)\}/g;
+    let lastIndex = 0;
+    let match;
+    
+    while ((match = regex.exec(str)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push({ value: str.slice(lastIndex, match.index), isVar: false });
+      }
+      parts.push({ value: match[1], isVar: true });
+      lastIndex = regex.lastIndex;
+    }
+    
+    if (lastIndex < str.length) {
+      parts.push({ value: str.slice(lastIndex), isVar: false });
+    }
+    
+    return parts;
   }
 
   private generateInput(node: IRInput): string {
@@ -388,7 +441,7 @@ export class CppGenerator {
     return `${node.callee}(${args})`;
   }
 
-  private mapType(type: DataType): string {
+  private mapType(type: DataType, isParam = false): string {
     const typeMap: Record<string, string> = {
       'int': 'int',
       'float': 'float',
@@ -397,7 +450,7 @@ export class CppGenerator {
       'string': 'string',
       'bool': 'bool',
       'void': 'void',
-      'auto': 'auto',
+      'auto': isParam ? 'string' : 'auto', // Use string for params, auto for vars
     };
     return typeMap[type] || 'auto';
   }

@@ -179,7 +179,7 @@ export class JavaGenerator {
   private generateFunction(node: IRFunction, isStatic = false): string {
     const indent = this.getIndent();
     const returnType = this.mapType(node.returnType);
-    const params = node.params.map(p => `${this.mapType(p.dataType)} ${p.name}`).join(', ');
+    const params = node.params.map(p => `${this.mapType(p.dataType, true)} ${p.name}`).join(', ');
     const staticMod = isStatic ? 'static ' : '';
     
     let code = `${indent}public ${staticMod}${returnType} ${node.name}(${params}) {\n`;
@@ -287,6 +287,26 @@ export class JavaGenerator {
   private generateFor(node: IRFor): string {
     const indent = this.getIndent();
     
+    // Handle Python range-style for loops
+    if (node.iterator && node.rangeEnd) {
+      const iterator = node.iterator;
+      const start = node.rangeStart ? this.generateExpression(node.rangeStart) : '0';
+      const end = this.generateExpression(node.rangeEnd);
+      const step = node.rangeStep ? this.generateExpression(node.rangeStep) : '1';
+      
+      let code = `${indent}for (int ${iterator} = ${start}; ${iterator} < ${end}; ${iterator} += ${step}) {\n`;
+      
+      this.indent++;
+      for (const stmt of node.body) {
+        const stmtCode = this.generateNode(stmt);
+        if (stmtCode) code += stmtCode + '\n';
+      }
+      this.indent--;
+      code += `${indent}}`;
+      
+      return code;
+    }
+    
     let init = '';
     if (node.init) {
       if (isIRVariable(node.init)) {
@@ -347,11 +367,26 @@ export class JavaGenerator {
       return `${indent}System.out.${method}();`;
     }
     
-    // Build concatenated string
-    const parts = node.args.map(arg => this.generateExpression(arg));
+    // Build concatenated string with f-string support
+    const parts: string[] = [];
+    for (const arg of node.args) {
+      if (isIRLiteral(arg) && arg.dataType === 'string') {
+        // Parse f-string interpolation
+        const parsed = this.parseFString(String(arg.value));
+        parts.push(parsed);
+      } else {
+        parts.push(this.generateExpression(arg));
+      }
+    }
     const output = parts.join(' + " " + ');
     
     return `${indent}System.out.${method}(${output});`;
+  }
+  
+  private parseFString(str: string): string {
+    // Convert {var} to " + var + "
+    const result = str.replace(/\{([^}]+)\}/g, '" + $1 + "');
+    return `"${result}"`.replace(/"" \+ /g, '').replace(/ \+ ""/g, '');
   }
 
   private generateInput(node: IRInput): string {
@@ -445,7 +480,7 @@ export class JavaGenerator {
     return `${node.callee}(${args})`;
   }
 
-  private mapType(type: DataType): string {
+  private mapType(type: DataType, isParam = false): string {
     const typeMap: Record<string, string> = {
       'int': 'int',
       'float': 'float',
@@ -454,7 +489,7 @@ export class JavaGenerator {
       'string': 'String',
       'bool': 'boolean',
       'void': 'void',
-      'auto': 'var',
+      'auto': isParam ? 'String' : 'var', // var not allowed in method params
     };
     return typeMap[type] || 'Object';
   }
