@@ -140,7 +140,7 @@ export class CGenerator {
     const indent = this.getIndent();
     const returnType = this.mapType(node.returnType);
     const params = node.params.map(p => {
-      const type = this.mapType(p.dataType);
+      const type = this.mapType(p.dataType, true);
       if (p.dataType === 'string') return `char ${p.name}[]`;
       return `${type} ${p.name}`;
     }).join(', ');
@@ -258,6 +258,26 @@ export class CGenerator {
   private generateFor(node: IRFor): string {
     const indent = this.getIndent();
     
+    // Handle Python range-style for loops
+    if (node.iterator && node.rangeEnd) {
+      const iterator = node.iterator;
+      const start = node.rangeStart ? this.generateExpression(node.rangeStart) : '0';
+      const end = this.generateExpression(node.rangeEnd);
+      const step = node.rangeStep ? this.generateExpression(node.rangeStep) : '1';
+      
+      let code = `${indent}for (int ${iterator} = ${start}; ${iterator} < ${end}; ${iterator} += ${step}) {\n`;
+      
+      this.indent++;
+      for (const stmt of node.body) {
+        const stmtCode = this.generateNode(stmt);
+        if (stmtCode) code += stmtCode + '\n';
+      }
+      this.indent--;
+      code += `${indent}}`;
+      
+      return code;
+    }
+    
     // Classic C for loop
     let init = '';
     if (node.init) {
@@ -324,8 +344,12 @@ export class CGenerator {
     
     for (const arg of node.args) {
       if (isIRLiteral(arg) && arg.dataType === 'string') {
-        // String literal - include directly in format
-        format += String(arg.value);
+        // String literal - check for f-string interpolation
+        const strValue = String(arg.value);
+        // Parse f-string interpolation like {name} or {var}
+        const parsed = this.parseFStringToFormat(strValue);
+        format += parsed.format;
+        args.push(...parsed.args);
       } else {
         // Variable or expression
         const expr = this.generateExpression(arg);
@@ -357,6 +381,15 @@ export class CGenerator {
       return `${indent}printf("${format}");`;
     }
     return `${indent}printf("${format}", ${args.join(', ')});`;
+  }
+  
+  private parseFStringToFormat(str: string): { format: string; args: string[] } {
+    const args: string[] = [];
+    const format = str.replace(/\{([^}]+)\}/g, (_, varName) => {
+      args.push(varName);
+      return '%s';
+    });
+    return { format, args };
   }
 
   private generateInput(node: IRInput): string {
@@ -448,7 +481,7 @@ export class CGenerator {
     return `${node.callee}(${args})`;
   }
 
-  private mapType(type: DataType): string {
+  private mapType(type: DataType, isParam = false): string {
     const typeMap: Record<string, string> = {
       'int': 'int',
       'float': 'float',
@@ -457,7 +490,7 @@ export class CGenerator {
       'string': 'char*',
       'bool': 'bool',
       'void': 'void',
-      'auto': 'int',
+      'auto': isParam ? 'const char*' : 'int', // Assume string params by default
     };
     return typeMap[type] || 'int';
   }
