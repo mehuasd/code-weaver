@@ -59,9 +59,47 @@ export class CppGenerator {
       lines.push('');
     }
     
-    for (const node of ir.body) {
+    // Separate functions/classes from main content
+    const functions = ir.body.filter(n => isIRFunction(n));
+    const classes = ir.body.filter(n => isIRClass(n));
+    const mainContent = ir.body.filter(n => !isIRFunction(n) && !isIRClass(n));
+    
+    // Generate classes first
+    for (const node of classes) {
       const code = this.generateNode(node);
       if (code) lines.push(code);
+    }
+    
+    // Generate functions (but wrap 'main' in int main)
+    for (const func of functions) {
+      const f = func as IRFunction;
+      if (f.name === 'main') {
+        lines.push('int main() {');
+        this.indent++;
+        for (const stmt of f.body) {
+          const code = this.generateNode(stmt);
+          if (code) lines.push(code);
+        }
+        lines.push(`${this.getIndent()}return 0;`);
+        this.indent--;
+        lines.push('}');
+      } else {
+        const code = this.generateNode(func);
+        if (code) lines.push(code);
+      }
+    }
+    
+    // If there's main content but no main function, wrap in int main()
+    if (mainContent.length > 0 && !functions.some(f => (f as IRFunction).name === 'main')) {
+      lines.push('int main() {');
+      this.indent++;
+      for (const node of mainContent) {
+        const code = this.generateNode(node);
+        if (code) lines.push(code);
+      }
+      lines.push(`${this.getIndent()}return 0;`);
+      this.indent--;
+      lines.push('}');
     }
     
     return lines.join('\n');

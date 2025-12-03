@@ -52,45 +52,75 @@ export function CodeEditor({
   const highlightCode = (code: string): string => {
     if (!code) return '';
     
-    // Escape HTML
-    let html = code
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-
-    // Apply syntax highlighting based on language
-    const patterns: [RegExp, string][] = [];
-
-    // Comments
-    patterns.push([/(\/\/.*$|#.*$)/gm, '<span class="syntax-comment">$1</span>']);
-    patterns.push([/(\/\*[\s\S]*?\*\/)/g, '<span class="syntax-comment">$1</span>']);
+    // Token-based highlighting to avoid nested span issues
+    const tokens: { text: string; type: string }[] = [];
+    let remaining = code;
     
-    // Strings
-    patterns.push([/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/g, '<span class="syntax-string">$1</span>']);
-    
-    // Numbers
-    patterns.push([/\b(\d+\.?\d*[fFlL]?)\b/g, '<span class="syntax-number">$1</span>']);
-    
-    // Keywords based on language
     const keywords: Record<string, string[]> = {
       python: ['def', 'class', 'if', 'elif', 'else', 'for', 'while', 'return', 'import', 'from', 'as', 'try', 'except', 'finally', 'with', 'in', 'and', 'or', 'not', 'True', 'False', 'None', 'self', 'print', 'input', 'range', 'len', 'int', 'float', 'str', 'bool', 'list', 'dict', 'set', 'tuple'],
-      c: ['int', 'float', 'double', 'char', 'void', 'if', 'else', 'for', 'while', 'return', 'struct', 'typedef', 'const', 'static', 'sizeof', 'NULL', 'true', 'false', 'printf', 'scanf', 'include'],
-      cpp: ['int', 'float', 'double', 'char', 'void', 'bool', 'auto', 'if', 'else', 'for', 'while', 'return', 'class', 'struct', 'public', 'private', 'protected', 'virtual', 'const', 'static', 'new', 'delete', 'nullptr', 'true', 'false', 'using', 'namespace', 'std', 'cout', 'cin', 'endl', 'string', 'include', 'iostream'],
-      java: ['public', 'private', 'protected', 'static', 'final', 'abstract', 'class', 'interface', 'extends', 'implements', 'new', 'this', 'super', 'if', 'else', 'for', 'while', 'do', 'switch', 'case', 'default', 'break', 'continue', 'return', 'void', 'int', 'float', 'double', 'boolean', 'char', 'String', 'true', 'false', 'null', 'import', 'package', 'System', 'out', 'println', 'Scanner'],
+      c: ['int', 'float', 'double', 'char', 'void', 'if', 'else', 'for', 'while', 'return', 'struct', 'typedef', 'const', 'static', 'sizeof', 'NULL', 'true', 'false', 'printf', 'scanf', 'include', 'main'],
+      cpp: ['int', 'float', 'double', 'char', 'void', 'bool', 'auto', 'if', 'else', 'for', 'while', 'return', 'class', 'struct', 'public', 'private', 'protected', 'virtual', 'const', 'static', 'new', 'delete', 'nullptr', 'true', 'false', 'using', 'namespace', 'std', 'cout', 'cin', 'endl', 'string', 'include', 'iostream', 'main'],
+      java: ['public', 'private', 'protected', 'static', 'final', 'abstract', 'class', 'interface', 'extends', 'implements', 'new', 'this', 'super', 'if', 'else', 'for', 'while', 'do', 'switch', 'case', 'default', 'break', 'continue', 'return', 'void', 'int', 'float', 'double', 'boolean', 'char', 'String', 'true', 'false', 'null', 'import', 'package', 'System', 'out', 'println', 'Scanner', 'main'],
     };
+    const langKeywords = new Set(keywords[language] || []);
 
-    const langKeywords = keywords[language] || [];
-    if (langKeywords.length > 0) {
-      const keywordPattern = new RegExp(`\\b(${langKeywords.join('|')})\\b`, 'g');
-      patterns.push([keywordPattern, '<span class="syntax-keyword">$1</span>']);
+    while (remaining.length > 0) {
+      // Check for single-line comment
+      const singleComment = remaining.match(/^(\/\/.*|#.*)/);
+      if (singleComment) {
+        tokens.push({ text: singleComment[0], type: 'comment' });
+        remaining = remaining.slice(singleComment[0].length);
+        continue;
+      }
+
+      // Check for multi-line comment
+      const multiComment = remaining.match(/^\/\*[\s\S]*?\*\//);
+      if (multiComment) {
+        tokens.push({ text: multiComment[0], type: 'comment' });
+        remaining = remaining.slice(multiComment[0].length);
+        continue;
+      }
+
+      // Check for strings
+      const stringMatch = remaining.match(/^("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/);
+      if (stringMatch) {
+        tokens.push({ text: stringMatch[0], type: 'string' });
+        remaining = remaining.slice(stringMatch[0].length);
+        continue;
+      }
+
+      // Check for numbers
+      const numMatch = remaining.match(/^\b\d+\.?\d*[fFlL]?\b/);
+      if (numMatch) {
+        tokens.push({ text: numMatch[0], type: 'number' });
+        remaining = remaining.slice(numMatch[0].length);
+        continue;
+      }
+
+      // Check for identifiers/keywords
+      const wordMatch = remaining.match(/^[a-zA-Z_][a-zA-Z0-9_]*/);
+      if (wordMatch) {
+        const type = langKeywords.has(wordMatch[0]) ? 'keyword' : 'text';
+        tokens.push({ text: wordMatch[0], type });
+        remaining = remaining.slice(wordMatch[0].length);
+        continue;
+      }
+
+      // Regular character
+      tokens.push({ text: remaining[0], type: 'text' });
+      remaining = remaining.slice(1);
     }
 
-    // Apply patterns (in reverse to avoid replacing within already-highlighted spans)
-    for (const [pattern, replacement] of patterns) {
-      html = html.replace(pattern, replacement);
-    }
-
-    return html;
+    // Build HTML from tokens
+    return tokens.map(({ text, type }) => {
+      const escaped = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      
+      if (type === 'text') return escaped;
+      return `<span class="syntax-${type}">${escaped}</span>`;
+    }).join('');
   };
 
   const lines = value.split('\n');
