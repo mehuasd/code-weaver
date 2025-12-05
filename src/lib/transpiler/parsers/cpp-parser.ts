@@ -28,34 +28,39 @@ export class CppParser {
   private pos = 0;
 
   parse(code: string): IRProgram {
-    this.tokens = this.tokenize(code);
-    this.pos = 0;
-    
-    const body: IRNode[] = [];
-    const imports: string[] = [];
-    
-    while (this.pos < this.tokens.length) {
-      // Preprocessor
-      if (this.match('PREPROCESSOR')) {
-        const directive = this.advance()!.value;
-        imports.push(directive);
-        continue;
-      }
+    try {
+      this.tokens = this.tokenize(code);
+      this.pos = 0;
       
-      // using namespace
-      if (this.match('KEYWORD', 'using')) {
-        while (!this.match('PUNCTUATION', ';') && this.pos < this.tokens.length) {
-          this.advance();
+      const body: IRNode[] = [];
+      const imports: string[] = [];
+      
+      while (this.pos < this.tokens.length) {
+        // Preprocessor
+        if (this.match('PREPROCESSOR')) {
+          const directive = this.advance()!.value;
+          imports.push(directive);
+          continue;
         }
-        this.consume('PUNCTUATION', ';');
-        continue;
+        
+        // using namespace
+        if (this.match('KEYWORD', 'using')) {
+          while (!this.match('PUNCTUATION', ';') && this.pos < this.tokens.length) {
+            this.advance();
+          }
+          this.consume('PUNCTUATION', ';');
+          continue;
+        }
+        
+        const node = this.parseTopLevel();
+        if (node) body.push(node);
       }
       
-      const node = this.parseTopLevel();
-      if (node) body.push(node);
+      return { type: 'program', body, imports };
+    } catch (error) {
+      console.error('C++ parser error:', error);
+      return { type: 'program', body: [], imports: [] };
     }
-    
-    return { type: 'program', body, imports };
   }
 
   private tokenize(code: string): Token[] {
@@ -106,7 +111,7 @@ export class CppParser {
         i++;
         while (i < code.length && code[i] !== '"') {
           if (code[i] === '\\') str += code[i++];
-          str += code[i++];
+          if (i < code.length) str += code[i++];
         }
         str += '"';
         i++;
@@ -120,7 +125,7 @@ export class CppParser {
         i++;
         while (i < code.length && code[i] !== "'") {
           if (code[i] === '\\') char += code[i++];
-          char += code[i++];
+          if (i < code.length) char += code[i++];
         }
         char += "'";
         i++;
@@ -545,6 +550,7 @@ export class CppParser {
     let iterator: string | undefined;
     let rangeStart: IRNode | undefined;
     let rangeEnd: IRNode | undefined;
+    let rangeStep: IRNode | undefined;
     
     if (init?.type === 'variable') {
       const varInit = init as IRVariable;
@@ -556,10 +562,31 @@ export class CppParser {
       const binOp = condition as IRBinaryOp;
       if (binOp.operator === '<' || binOp.operator === '<=') {
         rangeEnd = binOp.right;
+        if (binOp.operator === '<=') {
+          rangeEnd = {
+            type: 'binary_op',
+            operator: '+',
+            left: binOp.right,
+            right: { type: 'literal', value: 1, dataType: 'int' } as IRLiteral
+          } as IRBinaryOp;
+        }
       }
     }
     
-    return { type: 'for', init, condition, update, iterator, rangeStart, rangeEnd, body };
+    // Extract step from update
+    if (update?.type === 'unary_op') {
+      const unary = update as IRNode & { operator: string; operand: IRNode };
+      if (unary.operator === '++' || unary.operator === '++_post') {
+        rangeStep = { type: 'literal', value: 1, dataType: 'int' } as IRLiteral;
+      }
+    } else if (update?.type === 'binary_op') {
+      const binOp = update as IRBinaryOp;
+      if (binOp.operator === '+=') {
+        rangeStep = binOp.right;
+      }
+    }
+    
+    return { type: 'for', init, condition, update, iterator, rangeStart, rangeEnd, rangeStep, body };
   }
 
   private parseWhile(): IRWhile {
@@ -646,7 +673,11 @@ export class CppParser {
       this.advance();
     }
     
-    const typeToken = this.advance()!;
+    const typeToken = this.advance();
+    if (!typeToken) {
+      return { type: 'variable', name: 'unknown', dataType: 'int' };
+    }
+    
     let dataType = this.mapCppType(typeToken.value);
     
     if (typeToken.value === 'std' && this.match('OPERATOR', '::')) {
@@ -658,7 +689,10 @@ export class CppParser {
     this.consume('PUNCTUATION', '*');
     this.consume('PUNCTUATION', '&');
     
-    const nameToken = this.consume('IDENTIFIER')!;
+    const nameToken = this.consume('IDENTIFIER');
+    if (!nameToken) {
+      return { type: 'variable', name: 'unknown', dataType };
+    }
     
     let value: IRNode | undefined;
     if (this.match('PUNCTUATION', '=')) {
@@ -810,6 +844,7 @@ export class CppParser {
       return { type: 'identifier', name: token.value } as IRIdentifier;
     }
     
+    // Skip unknown token and return empty
     this.advance();
     return { type: 'literal', value: '', dataType: 'string' } as IRLiteral;
   }

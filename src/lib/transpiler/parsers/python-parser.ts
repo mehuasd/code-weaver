@@ -24,21 +24,23 @@ interface Token {
   value: string;
   line: number;
   column: number;
+  indent: number;
 }
 
 export class PythonParser {
   private tokens: Token[] = [];
   private pos = 0;
-  private currentIndent = 0;
+  private lines: string[] = [];
 
   parse(code: string): IRProgram {
+    this.lines = code.split('\n');
     this.tokens = this.tokenize(code);
     this.pos = 0;
     
     const body: IRNode[] = [];
     
     while (this.pos < this.tokens.length) {
-      const node = this.parseStatement();
+      const node = this.parseStatement(0);
       if (node) body.push(node);
     }
     
@@ -57,18 +59,21 @@ export class PythonParser {
       const line = lines[lineNum];
       let col = 0;
       
-      // Handle indentation
+      // Calculate indentation (spaces at start of line)
       const indentMatch = line.match(/^(\s*)/);
-      if (indentMatch && indentMatch[1].length > 0 && line.trim().length > 0) {
-        tokens.push({ type: 'INDENT', value: indentMatch[1], line: lineNum, column: 0 });
-        col = indentMatch[1].length;
-      }
+      const lineIndent = indentMatch ? indentMatch[1].length : 0;
+      
+      // Skip empty lines
+      if (line.trim().length === 0) continue;
+      
+      // Skip leading whitespace for tokenizing
+      col = lineIndent;
       
       while (col < line.length) {
         const remaining = line.slice(col);
         
-        // Skip whitespace (not at start of line)
-        if (/^\s+/.test(remaining) && col > 0) {
+        // Skip whitespace (after indentation)
+        if (/^\s+/.test(remaining)) {
           const match = remaining.match(/^\s+/);
           col += match![0].length;
           continue;
@@ -76,15 +81,15 @@ export class PythonParser {
         
         // Comments
         if (remaining.startsWith('#')) {
-          tokens.push({ type: 'COMMENT', value: remaining, line: lineNum, column: col });
+          tokens.push({ type: 'COMMENT', value: remaining, line: lineNum, column: col, indent: lineIndent });
           break;
         }
         
-        // String literals
+        // String literals (including f-strings)
         const stringMatch = remaining.match(/^(f?["'])((?:\\.|[^"'\\])*?)\1/) ||
                            remaining.match(/^(f?""")([\s\S]*?)"""/);
         if (stringMatch) {
-          tokens.push({ type: 'STRING', value: stringMatch[0], line: lineNum, column: col });
+          tokens.push({ type: 'STRING', value: stringMatch[0], line: lineNum, column: col, indent: lineIndent });
           col += stringMatch[0].length;
           continue;
         }
@@ -92,7 +97,7 @@ export class PythonParser {
         // Numbers
         const numMatch = remaining.match(/^\d+\.?\d*/);
         if (numMatch) {
-          tokens.push({ type: 'NUMBER', value: numMatch[0], line: lineNum, column: col });
+          tokens.push({ type: 'NUMBER', value: numMatch[0], line: lineNum, column: col, indent: lineIndent });
           col += numMatch[0].length;
           continue;
         }
@@ -104,7 +109,7 @@ export class PythonParser {
                           'print', 'input', 'in', 'range', 'True', 'False', 'None', 'and', 
                           'or', 'not', 'self', 'int', 'float', 'str', 'bool'];
           const type = keywords.includes(wordMatch[0]) ? 'KEYWORD' : 'IDENTIFIER';
-          tokens.push({ type, value: wordMatch[0], line: lineNum, column: col });
+          tokens.push({ type, value: wordMatch[0], line: lineNum, column: col, indent: lineIndent });
           col += wordMatch[0].length;
           continue;
         }
@@ -112,7 +117,7 @@ export class PythonParser {
         // Operators
         const opMatch = remaining.match(/^(==|!=|<=|>=|<<|>>|\+=|-=|\*=|\/=|->|::|[+\-*/%<>=!&|^~])/);
         if (opMatch) {
-          tokens.push({ type: 'OPERATOR', value: opMatch[0], line: lineNum, column: col });
+          tokens.push({ type: 'OPERATOR', value: opMatch[0], line: lineNum, column: col, indent: lineIndent });
           col += opMatch[0].length;
           continue;
         }
@@ -120,7 +125,7 @@ export class PythonParser {
         // Punctuation
         const punctMatch = remaining.match(/^[()[\]{},;:.]/);
         if (punctMatch) {
-          tokens.push({ type: 'PUNCTUATION', value: punctMatch[0], line: lineNum, column: col });
+          tokens.push({ type: 'PUNCTUATION', value: punctMatch[0], line: lineNum, column: col, indent: lineIndent });
           col += 1;
           continue;
         }
@@ -128,9 +133,8 @@ export class PythonParser {
         col++;
       }
       
-      if (line.trim().length > 0) {
-        tokens.push({ type: 'NEWLINE', value: '\n', line: lineNum, column: col });
-      }
+      // Add newline token at end of each non-empty line
+      tokens.push({ type: 'NEWLINE', value: '\n', line: lineNum, column: col, indent: lineIndent });
     }
     
     return tokens;
@@ -160,21 +164,31 @@ export class PythonParser {
   }
 
   private skipNewlines(): void {
-    while (this.match('NEWLINE') || this.match('INDENT')) {
+    while (this.match('NEWLINE')) {
       this.advance();
     }
   }
 
-  private parseStatement(): IRNode | null {
-    this.consume('INDENT');
+  private getCurrentIndent(): number {
+    const token = this.peek();
+    return token ? token.indent : 0;
+  }
+
+  private parseStatement(minIndent: number): IRNode | null {
     this.skipNewlines();
     
     const token = this.peek();
     if (!token) return null;
     
+    // Check if we've dedented past our block
+    if (token.indent < minIndent) {
+      return null;
+    }
+    
     // Comments
     if (token.type === 'COMMENT') {
       this.advance();
+      this.skipNewlines();
       return {
         type: 'comment',
         text: token.value.slice(1).trim(),
@@ -193,17 +207,17 @@ export class PythonParser {
     
     // If statement
     if (this.match('KEYWORD', 'if')) {
-      return this.parseIf();
+      return this.parseIf(minIndent);
     }
     
     // For loop
     if (this.match('KEYWORD', 'for')) {
-      return this.parseFor();
+      return this.parseFor(minIndent);
     }
     
     // While loop
     if (this.match('KEYWORD', 'while')) {
-      return this.parseWhile();
+      return this.parseWhile(minIndent);
     }
     
     // Return statement
@@ -226,7 +240,9 @@ export class PythonParser {
   }
 
   private parseFunctionDef(): IRFunction {
-    this.consume('KEYWORD', 'def');
+    const defToken = this.consume('KEYWORD', 'def')!;
+    const functionIndent = defToken.indent;
+    
     const nameToken = this.consume('IDENTIFIER');
     const name = nameToken?.value || 'unknown';
     
@@ -236,7 +252,8 @@ export class PythonParser {
     this.consume('PUNCTUATION', ':');
     this.skipNewlines();
     
-    const body = this.parseBlock();
+    // Parse function body - only statements with indent > functionIndent
+    const body = this.parseBlock(functionIndent);
     
     // Infer return type from return statements
     let returnType: DataType = 'void';
@@ -295,45 +312,36 @@ export class PythonParser {
     return params;
   }
 
-  private parseBlock(): IRNode[] {
+  private parseBlock(parentIndent: number): IRNode[] {
     const statements: IRNode[] = [];
-    const startIndent = this.getIndentLevel();
+    const blockIndent = parentIndent + 4; // Python standard indent
     
     while (this.pos < this.tokens.length) {
-      const indentToken = this.peek();
-      if (indentToken?.type === 'INDENT') {
-        const currentIndent = indentToken.value.length;
-        if (currentIndent <= startIndent && statements.length > 0) break;
-      } else if (statements.length > 0 && !this.match('NEWLINE')) {
-        // Check if we're back to a lower indent level
-        const nextToken = this.peek();
-        if (nextToken && nextToken.line !== undefined) {
-          const lineIndent = this.getLineIndent(nextToken.line);
-          if (lineIndent <= startIndent) break;
-        }
+      this.skipNewlines();
+      
+      const token = this.peek();
+      if (!token) break;
+      
+      // Check if we've returned to parent indent level (or less)
+      if (token.indent <= parentIndent) {
+        break;
       }
       
-      this.skipNewlines();
-      const stmt = this.parseStatement();
-      if (stmt) statements.push(stmt);
-      else break;
+      const stmt = this.parseStatement(blockIndent);
+      if (stmt) {
+        statements.push(stmt);
+      } else {
+        break;
+      }
     }
     
     return statements;
   }
 
-  private getIndentLevel(): number {
-    const indent = this.tokens.slice(0, this.pos).reverse().find(t => t.type === 'INDENT');
-    return indent ? indent.value.length : 0;
-  }
-
-  private getLineIndent(line: number): number {
-    const indent = this.tokens.find(t => t.line === line && t.type === 'INDENT');
-    return indent ? indent.value.length : 0;
-  }
-
   private parseClassDef(): IRClass {
-    this.consume('KEYWORD', 'class');
+    const classToken = this.consume('KEYWORD', 'class')!;
+    const classIndent = classToken.indent;
+    
     const nameToken = this.consume('IDENTIFIER');
     const name = nameToken?.value || 'Unknown';
     
@@ -345,7 +353,7 @@ export class PythonParser {
     let constructor: IRFunction | undefined;
     
     // Parse class body
-    const body = this.parseBlock();
+    const body = this.parseBlock(classIndent);
     
     for (const node of body) {
       if (node.type === 'function') {
@@ -380,26 +388,32 @@ export class PythonParser {
     };
   }
 
-  private parseIf(): IRIf {
-    this.consume('KEYWORD', 'if');
+  private parseIf(minIndent: number): IRIf {
+    const ifToken = this.consume('KEYWORD', 'if')!;
+    const ifIndent = ifToken.indent;
+    
     const condition = this.parseExpression();
     this.consume('PUNCTUATION', ':');
     this.skipNewlines();
     
-    const thenBranch = this.parseBlock();
+    const thenBranch = this.parseBlock(ifIndent);
     let elseBranch: IRNode[] | undefined;
     let elseIf: IRIf | undefined;
     
     this.skipNewlines();
-    this.consume('INDENT');
     
-    if (this.match('KEYWORD', 'elif')) {
-      elseIf = this.parseIf();
-    } else if (this.match('KEYWORD', 'else')) {
-      this.advance();
-      this.consume('PUNCTUATION', ':');
-      this.skipNewlines();
-      elseBranch = this.parseBlock();
+    // Check for elif or else at the same indent level
+    const nextToken = this.peek();
+    if (nextToken && nextToken.indent === ifIndent) {
+      if (this.match('KEYWORD', 'elif')) {
+        // Change 'elif' to 'if' for recursive parsing
+        elseIf = this.parseElif(ifIndent);
+      } else if (this.match('KEYWORD', 'else')) {
+        this.advance();
+        this.consume('PUNCTUATION', ':');
+        this.skipNewlines();
+        elseBranch = this.parseBlock(ifIndent);
+      }
     }
     
     return {
@@ -411,8 +425,43 @@ export class PythonParser {
     };
   }
 
-  private parseFor(): IRFor {
-    this.consume('KEYWORD', 'for');
+  private parseElif(parentIndent: number): IRIf {
+    this.consume('KEYWORD', 'elif');
+    const condition = this.parseExpression();
+    this.consume('PUNCTUATION', ':');
+    this.skipNewlines();
+    
+    const thenBranch = this.parseBlock(parentIndent);
+    let elseBranch: IRNode[] | undefined;
+    let elseIf: IRIf | undefined;
+    
+    this.skipNewlines();
+    
+    const nextToken = this.peek();
+    if (nextToken && nextToken.indent === parentIndent) {
+      if (this.match('KEYWORD', 'elif')) {
+        elseIf = this.parseElif(parentIndent);
+      } else if (this.match('KEYWORD', 'else')) {
+        this.advance();
+        this.consume('PUNCTUATION', ':');
+        this.skipNewlines();
+        elseBranch = this.parseBlock(parentIndent);
+      }
+    }
+    
+    return {
+      type: 'if',
+      condition,
+      thenBranch,
+      elseBranch,
+      elseIf,
+    };
+  }
+
+  private parseFor(minIndent: number): IRFor {
+    const forToken = this.consume('KEYWORD', 'for')!;
+    const forIndent = forToken.indent;
+    
     const iterToken = this.consume('IDENTIFIER');
     const iterator = iterToken?.value || 'i';
     
@@ -432,7 +481,7 @@ export class PythonParser {
       this.consume('PUNCTUATION', ':');
       this.skipNewlines();
       
-      const body = this.parseBlock();
+      const body = this.parseBlock(forIndent);
       
       let rangeStart: IRNode = { type: 'literal', value: 0, dataType: 'int' } as IRLiteral;
       let rangeEnd: IRNode;
@@ -463,7 +512,7 @@ export class PythonParser {
     const iterable = this.parseExpression();
     this.consume('PUNCTUATION', ':');
     this.skipNewlines();
-    const body = this.parseBlock();
+    const body = this.parseBlock(forIndent);
     
     return {
       type: 'for',
@@ -473,13 +522,15 @@ export class PythonParser {
     };
   }
 
-  private parseWhile(): IRWhile {
-    this.consume('KEYWORD', 'while');
+  private parseWhile(minIndent: number): IRWhile {
+    const whileToken = this.consume('KEYWORD', 'while')!;
+    const whileIndent = whileToken.indent;
+    
     const condition = this.parseExpression();
     this.consume('PUNCTUATION', ':');
     this.skipNewlines();
     
-    const body = this.parseBlock();
+    const body = this.parseBlock(whileIndent);
     
     return {
       type: 'while',
@@ -504,17 +555,25 @@ export class PythonParser {
     this.consume('PUNCTUATION', '(');
     
     const args: IRNode[] = [];
+    
     while (!this.match('PUNCTUATION', ')')) {
+      // Check for keyword arguments like end=''
+      if (this.match('IDENTIFIER', 'end') || this.match('IDENTIFIER', 'sep')) {
+        // Skip keyword argument
+        this.advance(); // skip 'end' or 'sep'
+        this.consume('OPERATOR', '=');
+        this.parseExpression(); // skip the value
+        this.consume('PUNCTUATION', ',');
+        continue;
+      }
+      
       args.push(this.parseExpression());
-      this.consume('PUNCTUATION', ',');
+      if (!this.consume('PUNCTUATION', ',')) break;
     }
+    
     this.consume('PUNCTUATION', ')');
     
-    return {
-      type: 'print',
-      args,
-      newline: true,
-    };
+    return { type: 'print', args, newline: true };
   }
 
   private parseInput(): IRInput {
@@ -522,91 +581,73 @@ export class PythonParser {
     this.consume('PUNCTUATION', '(');
     
     let prompt: string | undefined;
+    
     if (this.match('STRING')) {
-      const strToken = this.advance();
-      prompt = strToken?.value.slice(1, -1);
+      const strToken = this.advance()!;
+      prompt = strToken.value.slice(1, -1); // Remove quotes
     }
     
     this.consume('PUNCTUATION', ')');
     
-    return {
-      type: 'input',
-      prompt,
-    };
+    return { type: 'input', prompt };
   }
 
   private parseAssignmentOrExpression(): IRNode | null {
-    const firstToken = this.peek();
-    if (!firstToken) return null;
+    const startPos = this.pos;
+    const left = this.parseExpression();
     
-    // Check for variable declaration with type hint
-    if (firstToken.type === 'IDENTIFIER') {
-      const nextToken = this.peek(1);
+    if (!left) return null;
+    
+    // Check for assignment
+    if (this.match('OPERATOR', '=')) {
+      this.advance();
+      const value = this.parseExpression();
       
-      // Assignment: x = value
-      if (nextToken?.type === 'OPERATOR' && nextToken.value === '=') {
-        const name = this.advance()!.value;
-        this.advance(); // consume =
-        const value = this.parseExpression();
+      if (left.type === 'identifier') {
+        const target = (left as IRIdentifier).name;
         
-        // Try to infer type from value
-        const dataType = this.inferType(value);
-        
-        return {
-          type: 'variable',
-          name,
-          dataType,
-          value,
-        } as IRVariable;
-      }
-      
-      // Type-annotated: x: int = value
-      if (nextToken?.type === 'PUNCTUATION' && nextToken.value === ':') {
-        const name = this.advance()!.value;
-        this.advance(); // consume :
-        const typeToken = this.consume('KEYWORD') || this.consume('IDENTIFIER');
-        const dataType = typeToken ? this.mapPythonType(typeToken.value) : 'auto';
-        
-        if (this.match('OPERATOR', '=')) {
-          this.advance();
-          const value = this.parseExpression();
+        // Check if it's a new variable declaration
+        if (!target.includes('.')) {
           return {
             type: 'variable',
-            name,
-            dataType,
+            name: target,
+            dataType: this.inferType(value),
             value,
           } as IRVariable;
         }
         
         return {
-          type: 'variable',
-          name,
-          dataType,
-        } as IRVariable;
+          type: 'assignment',
+          target,
+          value,
+        } as IRAssignment;
       }
-      
-      // Self assignment: self.x = value
-      if (firstToken.value === 'self' && nextToken?.type === 'PUNCTUATION' && nextToken.value === '.') {
-        this.advance(); // self
-        this.advance(); // .
-        const member = this.consume('IDENTIFIER');
-        const target = `self.${member?.value || ''}`;
+    }
+    
+    // Compound assignment
+    const compoundOps = ['+=', '-=', '*=', '/='];
+    for (const op of compoundOps) {
+      if (this.match('OPERATOR', op)) {
+        this.advance();
+        const right = this.parseExpression();
         
-        if (this.match('OPERATOR', '=')) {
-          this.advance();
-          const value = this.parseExpression();
+        if (left.type === 'identifier') {
           return {
             type: 'assignment',
-            target,
-            value,
+            target: (left as IRIdentifier).name,
+            value: {
+              type: 'binary_op',
+              operator: op[0],
+              left,
+              right,
+            } as IRBinaryOp,
           } as IRAssignment;
         }
       }
     }
     
-    // Expression statement
-    const expr = this.parseExpression();
-    return expr;
+    // Just an expression (like a function call)
+    return left;
   }
 
   private parseExpression(): IRNode {
@@ -619,48 +660,49 @@ export class PythonParser {
     while (this.match('KEYWORD', 'or')) {
       this.advance();
       const right = this.parseAnd();
-      left = {
-        type: 'binary_op',
-        operator: '||',
-        left,
-        right,
-      } as IRBinaryOp;
+      left = { type: 'binary_op', operator: '||', left, right } as IRBinaryOp;
     }
     
     return left;
   }
 
   private parseAnd(): IRNode {
-    let left = this.parseComparison();
+    let left = this.parseNot();
     
     while (this.match('KEYWORD', 'and')) {
       this.advance();
-      const right = this.parseComparison();
-      left = {
-        type: 'binary_op',
-        operator: '&&',
-        left,
-        right,
-      } as IRBinaryOp;
+      const right = this.parseNot();
+      left = { type: 'binary_op', operator: '&&', left, right } as IRBinaryOp;
     }
     
     return left;
   }
 
+  private parseNot(): IRNode {
+    if (this.match('KEYWORD', 'not')) {
+      this.advance();
+      const operand = this.parseNot();
+      return { type: 'unary_op', operator: '!', operand } as IRNode & { operator: string; operand: IRNode };
+    }
+    return this.parseComparison();
+  }
+
   private parseComparison(): IRNode {
     let left = this.parseAddSub();
     
-    while (this.match('OPERATOR', '==') || this.match('OPERATOR', '!=') ||
-           this.match('OPERATOR', '<') || this.match('OPERATOR', '>') ||
-           this.match('OPERATOR', '<=') || this.match('OPERATOR', '>=')) {
-      const op = this.advance()!.value;
-      const right = this.parseAddSub();
-      left = {
-        type: 'binary_op',
-        operator: op,
-        left,
-        right,
-      } as IRBinaryOp;
+    const compOps = ['==', '!=', '<', '>', '<=', '>='];
+    while (true) {
+      let found = false;
+      for (const op of compOps) {
+        if (this.match('OPERATOR', op)) {
+          this.advance();
+          const right = this.parseAddSub();
+          left = { type: 'binary_op', operator: op, left, right } as IRBinaryOp;
+          found = true;
+          break;
+        }
+      }
+      if (!found) break;
     }
     
     return left;
@@ -672,12 +714,7 @@ export class PythonParser {
     while (this.match('OPERATOR', '+') || this.match('OPERATOR', '-')) {
       const op = this.advance()!.value;
       const right = this.parseMulDiv();
-      left = {
-        type: 'binary_op',
-        operator: op,
-        left,
-        right,
-      } as IRBinaryOp;
+      left = { type: 'binary_op', operator: op, left, right } as IRBinaryOp;
     }
     
     return left;
@@ -689,38 +726,23 @@ export class PythonParser {
     while (this.match('OPERATOR', '*') || this.match('OPERATOR', '/') || this.match('OPERATOR', '%')) {
       const op = this.advance()!.value;
       const right = this.parseUnary();
-      left = {
-        type: 'binary_op',
-        operator: op,
-        left,
-        right,
-      } as IRBinaryOp;
+      left = { type: 'binary_op', operator: op, left, right } as IRBinaryOp;
     }
     
     return left;
   }
 
   private parseUnary(): IRNode {
-    if (this.match('KEYWORD', 'not') || this.match('OPERATOR', '-')) {
+    if (this.match('OPERATOR', '-') || this.match('OPERATOR', '+')) {
       const op = this.advance()!.value;
       const operand = this.parseUnary();
-      return {
-        type: 'unary_op',
-        operator: op === 'not' ? '!' : op,
-        operand,
-      } as IRNode & { operator: string; operand: IRNode };
+      return { type: 'unary_op', operator: op, operand } as IRNode & { operator: string; operand: IRNode };
     }
-    
     return this.parsePrimary();
   }
 
   private parsePrimary(): IRNode {
-    const token = this.peek();
-    if (!token) {
-      return { type: 'literal', value: '', dataType: 'string' } as IRLiteral;
-    }
-    
-    // Parenthesized expression
+    // Parentheses
     if (this.match('PUNCTUATION', '(')) {
       this.advance();
       const expr = this.parseExpression();
@@ -728,32 +750,36 @@ export class PythonParser {
       return expr;
     }
     
-    // String literal
-    if (token.type === 'STRING') {
-      this.advance();
+    // Number
+    if (this.match('NUMBER')) {
+      const token = this.advance()!;
+      const value = token.value.includes('.') ? parseFloat(token.value) : parseInt(token.value);
+      const dataType: DataType = token.value.includes('.') ? 'float' : 'int';
+      return { type: 'literal', value, dataType } as IRLiteral;
+    }
+    
+    // String
+    if (this.match('STRING')) {
+      const token = this.advance()!;
       let value = token.value;
-      // Remove quotes and f-string prefix
-      if (value.startsWith('f')) value = value.slice(1);
-      if (value.startsWith('"""') || value.startsWith("'''")) {
-        value = value.slice(3, -3);
+      
+      // Handle f-strings
+      const isFString = value.startsWith('f"') || value.startsWith("f'");
+      if (isFString) {
+        value = value.slice(2, -1); // Remove f and quotes
       } else {
-        value = value.slice(1, -1);
+        value = value.slice(1, -1); // Remove quotes
       }
-      return { type: 'literal', value, dataType: 'string' } as IRLiteral;
+      
+      return { 
+        type: 'literal', 
+        value, 
+        dataType: 'string',
+        isFString,
+      } as IRLiteral & { isFString?: boolean };
     }
     
-    // Number literal
-    if (token.type === 'NUMBER') {
-      this.advance();
-      const isFloat = token.value.includes('.');
-      return {
-        type: 'literal',
-        value: isFloat ? parseFloat(token.value) : parseInt(token.value),
-        dataType: isFloat ? 'float' : 'int',
-      } as IRLiteral;
-    }
-    
-    // Boolean literals
+    // Boolean
     if (this.match('KEYWORD', 'True')) {
       this.advance();
       return { type: 'literal', value: true, dataType: 'bool' } as IRLiteral;
@@ -769,78 +795,120 @@ export class PythonParser {
       return { type: 'literal', value: 'null', dataType: 'void' } as IRLiteral;
     }
     
-    // Input call
-    if (this.match('KEYWORD', 'input')) {
-      return this.parseInput();
-    }
-    
-    // Type conversion functions
+    // Built-in type conversions
     if (this.match('KEYWORD', 'int') || this.match('KEYWORD', 'float') || this.match('KEYWORD', 'str')) {
       const typeFunc = this.advance()!.value;
       this.consume('PUNCTUATION', '(');
-      const arg = this.parseExpression();
+      const args: IRNode[] = [];
+      while (!this.match('PUNCTUATION', ')')) {
+        args.push(this.parseExpression());
+        this.consume('PUNCTUATION', ',');
+      }
       this.consume('PUNCTUATION', ')');
-      return {
-        type: 'call',
-        callee: typeFunc,
-        args: [arg],
-      } as IRCall;
+      return { type: 'call', callee: typeFunc, args } as IRCall;
+    }
+    
+    // Input as expression
+    if (this.match('KEYWORD', 'input')) {
+      this.advance();
+      this.consume('PUNCTUATION', '(');
+      let prompt: string | undefined;
+      if (this.match('STRING')) {
+        const strToken = this.advance()!;
+        prompt = strToken.value.slice(1, -1);
+      }
+      this.consume('PUNCTUATION', ')');
+      return { type: 'input', prompt } as IRInput;
+    }
+    
+    // Print as expression (rare but possible)
+    if (this.match('KEYWORD', 'print')) {
+      return this.parsePrint();
+    }
+    
+    // Range as expression (for list comprehensions etc)
+    if (this.match('KEYWORD', 'range') || this.match('IDENTIFIER', 'range')) {
+      this.advance();
+      this.consume('PUNCTUATION', '(');
+      const args: IRNode[] = [];
+      while (!this.match('PUNCTUATION', ')')) {
+        args.push(this.parseExpression());
+        this.consume('PUNCTUATION', ',');
+      }
+      this.consume('PUNCTUATION', ')');
+      return { type: 'call', callee: 'range', args } as IRCall;
     }
     
     // Identifier or function call
-    if (token.type === 'IDENTIFIER' || token.type === 'KEYWORD') {
-      this.advance();
+    if (this.match('IDENTIFIER') || this.match('KEYWORD', 'self')) {
+      const token = this.advance()!;
       let name = token.value;
       
-      // Member access
+      // Check for attribute access
       while (this.match('PUNCTUATION', '.')) {
         this.advance();
-        const member = this.consume('IDENTIFIER');
-        name += '.' + (member?.value || '');
+        const attr = this.consume('IDENTIFIER');
+        if (attr) name += '.' + attr.value;
       }
       
-      // Function call
+      // Check for function call
       if (this.match('PUNCTUATION', '(')) {
         this.advance();
         const args: IRNode[] = [];
         while (!this.match('PUNCTUATION', ')')) {
           args.push(this.parseExpression());
-          this.consume('PUNCTUATION', ',');
+          if (!this.consume('PUNCTUATION', ',')) break;
         }
         this.consume('PUNCTUATION', ')');
         
-        const isMethod = name.includes('.');
+        // Check if it's a method call
         const parts = name.split('.');
+        if (parts.length > 1) {
+          return {
+            type: 'call',
+            callee: parts[parts.length - 1],
+            args,
+            isMethod: true,
+            object: parts.slice(0, -1).join('.'),
+          } as IRCall;
+        }
         
-        return {
-          type: 'call',
-          callee: isMethod ? parts[parts.length - 1] : name,
-          args,
-          isMethod,
-          object: isMethod ? parts.slice(0, -1).join('.') : undefined,
-        } as IRCall;
+        return { type: 'call', callee: name, args } as IRCall;
       }
       
       return { type: 'identifier', name } as IRIdentifier;
     }
     
-    // Fallback
-    this.advance();
-    return { type: 'literal', value: '', dataType: 'string' } as IRLiteral;
+    // Empty expression
+    return { type: 'literal', value: '', dataType: 'void' } as IRLiteral;
   }
 
   private inferType(node: IRNode): DataType {
     if (node.type === 'literal') {
       return (node as IRLiteral).dataType;
     }
-    if (node.type === 'input') {
-      return 'string';
+    if (node.type === 'binary_op') {
+      const binOp = node as IRBinaryOp;
+      const leftType = this.inferType(binOp.left);
+      const rightType = this.inferType(binOp.right);
+      
+      // Comparison operators return bool
+      if (['==', '!=', '<', '>', '<=', '>='].includes(binOp.operator)) {
+        return 'bool';
+      }
+      
+      // If either is float, result is float
+      if (leftType === 'float' || rightType === 'float') return 'float';
+      if (leftType === 'double' || rightType === 'double') return 'double';
+      if (leftType === 'string' || rightType === 'string') return 'string';
+      return 'int';
     }
     if (node.type === 'call') {
       const call = node as IRCall;
       if (call.callee === 'int') return 'int';
       if (call.callee === 'float') return 'float';
       if (call.callee === 'str') return 'string';
+      if (call.callee === 'input') return 'string';
     }
     return 'auto';
   }

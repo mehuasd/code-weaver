@@ -28,25 +28,30 @@ export class JavaParser {
   private pos = 0;
 
   parse(code: string): IRProgram {
-    this.tokens = this.tokenize(code);
-    this.pos = 0;
-    
-    const body: IRNode[] = [];
-    const imports: string[] = [];
-    
-    while (this.pos < this.tokens.length) {
-      // Package and imports
-      if (this.match('KEYWORD', 'package') || this.match('KEYWORD', 'import')) {
-        const importStmt = this.parseImport();
-        if (importStmt) imports.push(importStmt);
-        continue;
+    try {
+      this.tokens = this.tokenize(code);
+      this.pos = 0;
+      
+      const body: IRNode[] = [];
+      const imports: string[] = [];
+      
+      while (this.pos < this.tokens.length) {
+        // Package and imports
+        if (this.match('KEYWORD', 'package') || this.match('KEYWORD', 'import')) {
+          const importStmt = this.parseImport();
+          if (importStmt) imports.push(importStmt);
+          continue;
+        }
+        
+        const node = this.parseTopLevel();
+        if (node) body.push(node);
       }
       
-      const node = this.parseTopLevel();
-      if (node) body.push(node);
+      return { type: 'program', body, imports };
+    } catch (error) {
+      console.error('Java parser error:', error);
+      return { type: 'program', body: [], imports: [] };
     }
-    
-    return { type: 'program', body, imports };
   }
 
   private tokenize(code: string): Token[] {
@@ -89,7 +94,7 @@ export class JavaParser {
         i++;
         while (i < code.length && code[i] !== '"') {
           if (code[i] === '\\') str += code[i++];
-          str += code[i++];
+          if (i < code.length) str += code[i++];
         }
         str += '"';
         i++;
@@ -103,7 +108,7 @@ export class JavaParser {
         i++;
         while (i < code.length && code[i] !== "'") {
           if (code[i] === '\\') char += code[i++];
-          char += code[i++];
+          if (i < code.length) char += code[i++];
         }
         char += "'";
         i++;
@@ -241,12 +246,19 @@ export class JavaParser {
     const members: IRVariable[] = [];
     const methods: IRFunction[] = [];
     let constructor: IRFunction | undefined;
+    let mainMethod: IRFunction | undefined;
     
     while (!this.match('PUNCTUATION', '}') && this.pos < this.tokens.length) {
-      // Skip modifiers
+      // Track modifiers to detect static
+      let isStatic = false;
+      
+      // Skip modifiers but track static
       while (this.match('KEYWORD', 'public') || this.match('KEYWORD', 'private') ||
              this.match('KEYWORD', 'protected') || this.match('KEYWORD', 'static') ||
              this.match('KEYWORD', 'final')) {
+        if (this.peek()?.value === 'static') {
+          isStatic = true;
+        }
         this.advance();
       }
       
@@ -260,7 +272,13 @@ export class JavaParser {
       if (this.isType(this.peek())) {
         const memberOrMethod = this.parseMethodOrField();
         if (memberOrMethod?.type === 'function') {
-          methods.push(memberOrMethod as IRFunction);
+          const func = memberOrMethod as IRFunction;
+          // Check for main method
+          if (func.name === 'main' && isStatic) {
+            mainMethod = func;
+          } else {
+            methods.push(func);
+          }
         } else if (memberOrMethod?.type === 'variable') {
           members.push(memberOrMethod as IRVariable);
         }
@@ -278,7 +296,16 @@ export class JavaParser {
     
     this.consume('PUNCTUATION', '}');
     
-    return { type: 'class', name, members, methods, constructor };
+    // For Java classes with static main, we convert to a simpler structure
+    // The main method content becomes the "constructor" body for procedural conversion
+    const result: IRClass = { type: 'class', name, members, methods, constructor };
+    
+    // If there's a main method, attach it for generators to handle
+    if (mainMethod) {
+      (result as any).mainMethod = mainMethod;
+    }
+    
+    return result;
   }
 
   private parseConstructor(className: string): IRFunction {
@@ -344,6 +371,12 @@ export class JavaParser {
     while (!this.match('PUNCTUATION', ')')) {
       const typeToken = this.advance();
       if (!typeToken) break;
+      
+      // Handle array params like String[]
+      if (this.match('PUNCTUATION', '[')) {
+        this.advance();
+        this.consume('PUNCTUATION', ']');
+      }
       
       const nameToken = this.consume('IDENTIFIER');
       if (nameToken) {
@@ -484,6 +517,7 @@ export class JavaParser {
     let iterator: string | undefined;
     let rangeStart: IRNode | undefined;
     let rangeEnd: IRNode | undefined;
+    let rangeStep: IRNode | undefined;
     
     if (init?.type === 'variable') {
       const varInit = init as IRVariable;
@@ -495,6 +529,27 @@ export class JavaParser {
       const binOp = condition as IRBinaryOp;
       if (binOp.operator === '<' || binOp.operator === '<=') {
         rangeEnd = binOp.right;
+        if (binOp.operator === '<=') {
+          rangeEnd = {
+            type: 'binary_op',
+            operator: '+',
+            left: binOp.right,
+            right: { type: 'literal', value: 1, dataType: 'int' } as IRLiteral
+          } as IRBinaryOp;
+        }
+      }
+    }
+    
+    // Extract step from update
+    if (update?.type === 'unary_op') {
+      const unary = update as IRNode & { operator: string; operand: IRNode };
+      if (unary.operator === '++' || unary.operator === '++_post') {
+        rangeStep = { type: 'literal', value: 1, dataType: 'int' } as IRLiteral;
+      }
+    } else if (update?.type === 'binary_op') {
+      const binOp = update as IRBinaryOp;
+      if (binOp.operator === '+=') {
+        rangeStep = binOp.right;
       }
     }
     
@@ -506,6 +561,7 @@ export class JavaParser {
       iterator,
       rangeStart,
       rangeEnd,
+      rangeStep,
       body,
     };
   }
@@ -559,10 +615,17 @@ export class JavaParser {
   }
 
   private parseLocalVariable(): IRVariable {
-    const typeToken = this.advance()!;
+    const typeToken = this.advance();
+    if (!typeToken) {
+      return { type: 'variable', name: 'unknown', dataType: 'int' };
+    }
+    
     const dataType = this.mapJavaType(typeToken.value);
     
-    const nameToken = this.consume('IDENTIFIER')!;
+    const nameToken = this.consume('IDENTIFIER');
+    if (!nameToken) {
+      return { type: 'variable', name: 'unknown', dataType };
+    }
     
     let value: IRNode | undefined;
     if (this.match('PUNCTUATION', '=')) {
