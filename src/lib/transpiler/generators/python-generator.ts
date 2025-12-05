@@ -332,17 +332,34 @@ export class PythonGenerator {
   private generateLiteral(node: IRLiteral): string {
     if (node.dataType === 'string') {
       const value = String(node.value);
-      // Handle format strings
-      if (value.includes('{') && value.includes('}')) {
-        return `f"${value}"`;
+      
+      // Convert C-style format strings to Python f-strings
+      const hasFStringInterpolation = value.includes('{') && value.includes('}');
+      const hasCFormatSpecifiers = /%[dsifc%]/.test(value);
+      
+      if (hasFStringInterpolation) {
+        // Already has f-string syntax, just clean it up
+        const cleanValue = value.replace(/\\n$/, '');
+        return `f"${cleanValue}"`;
       }
-      // Handle escape sequences
-      return `"${value.replace(/\\n/g, '\\n')}"`;
+      
+      if (hasCFormatSpecifiers) {
+        // Convert C printf format to Python f-string
+        // This is a basic conversion - complex formats may need more work
+        const cleanValue = value.replace(/\\n$/, '').replace(/%[dsifc]/g, '{}');
+        return `"${cleanValue}"`;
+      }
+      
+      // Regular string, handle escape sequences
+      const cleanValue = value.replace(/\\n$/, '');
+      return `"${cleanValue}"`;
     }
     if (node.dataType === 'bool') {
       return node.value ? 'True' : 'False';
     }
     if (node.value === 'null') return 'None';
+    if (node.value === 'true') return 'True';
+    if (node.value === 'false') return 'False';
     return String(node.value);
   }
 

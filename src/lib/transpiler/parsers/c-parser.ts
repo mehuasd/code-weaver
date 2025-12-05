@@ -262,24 +262,30 @@ export class CParser {
       const typeToken = this.advance();
       if (!typeToken) break;
       
+      let dataType = this.mapCType(typeToken.value);
+      
       // Skip pointer asterisk
-      this.consume('PUNCTUATION', '*');
+      if (this.consume('PUNCTUATION', '*')) {
+        // It's a pointer, keep track for string handling
+        if (dataType === 'char') dataType = 'string';
+      }
       
       const nameToken = this.consume('IDENTIFIER');
       if (nameToken) {
+        // Handle array parameters like char name[]
+        if (this.match('PUNCTUATION', '[')) {
+          while (!this.match('PUNCTUATION', ']') && this.pos < this.tokens.length) {
+            this.advance();
+          }
+          this.consume('PUNCTUATION', ']');
+          if (dataType === 'char') dataType = 'string';
+        }
+        
         params.push({
           type: 'variable',
           name: nameToken.value,
-          dataType: this.mapCType(typeToken.value),
+          dataType,
         });
-      }
-      
-      // Handle array parameters
-      if (this.match('PUNCTUATION', '[')) {
-        while (!this.match('PUNCTUATION', ']') && this.pos < this.tokens.length) {
-          this.advance();
-        }
-        this.consume('PUNCTUATION', ']');
       }
       
       if (!this.consume('PUNCTUATION', ',')) break;
@@ -418,6 +424,7 @@ export class CParser {
     let iterator: string | undefined;
     let rangeStart: IRNode | undefined;
     let rangeEnd: IRNode | undefined;
+    let rangeStep: IRNode | undefined;
     
     if (init?.type === 'variable') {
       const varInit = init as IRVariable;
@@ -429,6 +436,37 @@ export class CParser {
       const binOp = condition as IRBinaryOp;
       if (binOp.operator === '<' || binOp.operator === '<=') {
         rangeEnd = binOp.right;
+        if (binOp.operator === '<=') {
+          // For <= we need to add 1 to make it exclusive
+          rangeEnd = {
+            type: 'binary_op',
+            operator: '+',
+            left: binOp.right,
+            right: { type: 'literal', value: 1, dataType: 'int' } as IRLiteral
+          } as IRBinaryOp;
+        }
+      }
+    }
+    
+    // Extract step from update expression
+    if (update?.type === 'unary_op') {
+      const unary = update as IRNode & { operator: string; operand: IRNode };
+      if (unary.operator === '++' || unary.operator === '++_post') {
+        rangeStep = { type: 'literal', value: 1, dataType: 'int' } as IRLiteral;
+      } else if (unary.operator === '--' || unary.operator === '--_post') {
+        rangeStep = { type: 'literal', value: -1, dataType: 'int' } as IRLiteral;
+      }
+    } else if (update?.type === 'binary_op') {
+      const binOp = update as IRBinaryOp;
+      if (binOp.operator === '+=' || binOp.operator === '-=') {
+        rangeStep = binOp.right;
+        if (binOp.operator === '-=') {
+          rangeStep = {
+            type: 'unary_op',
+            operator: '-',
+            operand: binOp.right
+          } as IRNode & { operator: string; operand: IRNode };
+        }
       }
     }
     
@@ -440,6 +478,7 @@ export class CParser {
       iterator,
       rangeStart,
       rangeEnd,
+      rangeStep,
       body,
     };
   }
@@ -474,29 +513,94 @@ export class CParser {
     this.consume('PUNCTUATION', '(');
     
     const args: IRNode[] = [];
+    const formatArgs: IRNode[] = [];
+    let formatString = '';
+    let hasNewline = false;
     
     // Format string
     if (this.match('STRING')) {
       const formatStr = this.advance()!.value;
-      const cleanStr = formatStr.slice(1, -1); // Remove quotes
-      args.push({ type: 'literal', value: cleanStr, dataType: 'string' } as IRLiteral);
-    }
-    
-    // Additional arguments
-    while (this.match('PUNCTUATION', ',')) {
-      this.advance();
-      args.push(this.parseExpression());
+      formatString = formatStr.slice(1, -1); // Remove quotes
+      hasNewline = formatString.includes('\\n');
+      
+      // Parse the format string and collect arguments
+      const parts = this.parsePrintfFormat(formatString);
+      
+      // Collect additional arguments
+      while (this.match('PUNCTUATION', ',')) {
+        this.advance();
+        formatArgs.push(this.parseExpression());
+      }
+      
+      // Convert format string and args to IRPrint args
+      let argIndex = 0;
+      let currentString = '';
+      
+      for (const part of parts) {
+        if (part.isFormat) {
+          // Push accumulated string if any
+          if (currentString) {
+            const cleanStr = currentString.replace(/\\n/g, '');
+            if (cleanStr) {
+              args.push({ type: 'literal', value: cleanStr, dataType: 'string' } as IRLiteral);
+            }
+            currentString = '';
+          }
+          // Push the corresponding argument
+          if (argIndex < formatArgs.length) {
+            args.push(formatArgs[argIndex++]);
+          }
+        } else {
+          currentString += part.text;
+        }
+      }
+      
+      // Push remaining string
+      if (currentString) {
+        const cleanStr = currentString.replace(/\\n/g, '');
+        if (cleanStr) {
+          args.push({ type: 'literal', value: cleanStr, dataType: 'string' } as IRLiteral);
+        }
+      }
     }
     
     this.consume('PUNCTUATION', ')');
     this.consume('PUNCTUATION', ';');
     
-    // Check for newline
-    const hasNewline = args.length > 0 && 
-      args[0].type === 'literal' && 
-      (args[0] as IRLiteral).value.toString().includes('\\n');
+    return { type: 'print', args: args.length > 0 ? args : [{ type: 'literal', value: '', dataType: 'string' } as IRLiteral], newline: hasNewline };
+  }
+
+  private parsePrintfFormat(format: string): Array<{ text: string; isFormat: boolean }> {
+    const parts: Array<{ text: string; isFormat: boolean }> = [];
+    let current = '';
+    let i = 0;
     
-    return { type: 'print', args, newline: hasNewline };
+    while (i < format.length) {
+      if (format[i] === '%' && i + 1 < format.length) {
+        const nextChar = format[i + 1];
+        if (['d', 's', 'f', 'c', 'i', 'x', 'X', 'o', 'u', 'e', 'E', 'g', 'G', 'p'].includes(nextChar)) {
+          if (current) {
+            parts.push({ text: current, isFormat: false });
+            current = '';
+          }
+          parts.push({ text: '%' + nextChar, isFormat: true });
+          i += 2;
+          continue;
+        } else if (nextChar === '%') {
+          current += '%';
+          i += 2;
+          continue;
+        }
+      }
+      current += format[i];
+      i++;
+    }
+    
+    if (current) {
+      parts.push({ text: current, isFormat: false });
+    }
+    
+    return parts;
   }
 
   private parseScanf(): IRInput {
@@ -504,23 +608,21 @@ export class CParser {
     this.consume('PUNCTUATION', '(');
     
     let targetType: DataType = 'string';
+    let targetVar: string | undefined;
     
     // Format string
     if (this.match('STRING')) {
-      const format = this.advance()!.value;
-      if (format.includes('%d') || format.includes('%i')) targetType = 'int';
-      else if (format.includes('%f') || format.includes('%lf')) targetType = 'float';
-      else if (format.includes('%s')) targetType = 'string';
+      const formatStr = this.advance()!.value;
+      if (formatStr.includes('%d') || formatStr.includes('%i')) targetType = 'int';
+      else if (formatStr.includes('%f')) targetType = 'float';
     }
     
-    this.consume('PUNCTUATION', ',');
-    
-    // Skip &
-    this.consume('PUNCTUATION', '&');
-    
-    let targetVar: string | undefined;
-    if (this.match('IDENTIFIER')) {
-      targetVar = this.advance()!.value;
+    // Variable
+    if (this.match('PUNCTUATION', ',')) {
+      this.advance();
+      this.consume('PUNCTUATION', '&'); // Address-of operator
+      const varToken = this.consume('IDENTIFIER');
+      if (varToken) targetVar = varToken.value;
     }
     
     this.consume('PUNCTUATION', ')');
@@ -529,31 +631,38 @@ export class CParser {
     return { type: 'input', targetVar, targetType };
   }
 
-  private parseVariableDecl(name?: string, dataType?: DataType): IRVariable | null {
-    if (!dataType) {
+  private parseVariableDecl(name?: string, dataType?: DataType): IRVariable {
+    if (!name || !dataType) {
+      // Skip modifiers
+      while (this.match('KEYWORD', 'const') || this.match('KEYWORD', 'static')) {
+        this.advance();
+      }
+      
       const typeToken = this.advance();
-      if (!typeToken) return null;
-      dataType = this.mapCType(typeToken.value);
-    }
-    
-    // Skip pointer
-    this.consume('PUNCTUATION', '*');
-    
-    if (!name) {
+      dataType = this.mapCType(typeToken?.value || 'int');
+      
+      // Check for pointer
+      if (this.consume('PUNCTUATION', '*')) {
+        if (dataType === 'char') dataType = 'string';
+      }
+      
       const nameToken = this.consume('IDENTIFIER');
-      if (!nameToken) return null;
-      name = nameToken.value;
+      name = nameToken?.value || 'unknown';
     }
     
-    // Array declaration
+    // Check for array
     if (this.match('PUNCTUATION', '[')) {
+      this.advance();
+      // Skip array size
       while (!this.match('PUNCTUATION', ']') && this.pos < this.tokens.length) {
         this.advance();
       }
       this.consume('PUNCTUATION', ']');
+      if (dataType === 'char') dataType = 'string';
     }
     
     let value: IRNode | undefined;
+    
     if (this.match('PUNCTUATION', '=')) {
       this.advance();
       value = this.parseExpression();
@@ -569,46 +678,51 @@ export class CParser {
   }
 
   private parseAssignment(): IRNode {
-    const left = this.parseLogicalOr();
+    const left = this.parseOr();
     
-    if (this.match('PUNCTUATION', '=') || this.match('OPERATOR', '+=') || 
-        this.match('OPERATOR', '-=') || this.match('OPERATOR', '*=') || 
-        this.match('OPERATOR', '/=')) {
-      const op = this.advance()!.value;
-      const right = this.parseAssignment();
-      
-      if (left.type === 'identifier') {
-        return {
-          type: 'binary_op',
-          operator: op,
-          left,
-          right,
-        } as IRBinaryOp;
+    const assignOps = ['=', '+=', '-=', '*=', '/='];
+    for (const op of assignOps) {
+      if (this.match('OPERATOR', op) || (op === '=' && this.match('PUNCTUATION', '='))) {
+        this.advance();
+        const right = this.parseAssignment();
+        return { type: 'binary_op', operator: op, left, right } as IRBinaryOp;
       }
     }
     
     return left;
   }
 
-  private parseLogicalOr(): IRNode {
-    let left = this.parseLogicalAnd();
+  private parseOr(): IRNode {
+    let left = this.parseAnd();
     
     while (this.match('OPERATOR', '||')) {
       this.advance();
-      const right = this.parseLogicalAnd();
+      const right = this.parseAnd();
       left = { type: 'binary_op', operator: '||', left, right } as IRBinaryOp;
     }
     
     return left;
   }
 
-  private parseLogicalAnd(): IRNode {
-    let left = this.parseComparison();
+  private parseAnd(): IRNode {
+    let left = this.parseEquality();
     
     while (this.match('OPERATOR', '&&')) {
       this.advance();
-      const right = this.parseComparison();
+      const right = this.parseEquality();
       left = { type: 'binary_op', operator: '&&', left, right } as IRBinaryOp;
+    }
+    
+    return left;
+  }
+
+  private parseEquality(): IRNode {
+    let left = this.parseComparison();
+    
+    while (this.match('OPERATOR', '==') || this.match('OPERATOR', '!=')) {
+      const op = this.advance()!.value;
+      const right = this.parseComparison();
+      left = { type: 'binary_op', operator: op, left, right } as IRBinaryOp;
     }
     
     return left;
@@ -617,9 +731,9 @@ export class CParser {
   private parseComparison(): IRNode {
     let left = this.parseAddSub();
     
-    while (this.match('OPERATOR', '==') || this.match('OPERATOR', '!=') ||
-           this.match('PUNCTUATION', '<') || this.match('PUNCTUATION', '>') ||
-           this.match('OPERATOR', '<=') || this.match('OPERATOR', '>=')) {
+    while (this.match('OPERATOR', '<') || this.match('OPERATOR', '>') ||
+           this.match('OPERATOR', '<=') || this.match('OPERATOR', '>=') ||
+           this.match('PUNCTUATION', '<') || this.match('PUNCTUATION', '>')) {
       const op = this.advance()!.value;
       const right = this.parseAddSub();
       left = { type: 'binary_op', operator: op, left, right } as IRBinaryOp;
@@ -643,8 +757,7 @@ export class CParser {
   private parseMulDiv(): IRNode {
     let left = this.parseUnary();
     
-    while (this.match('PUNCTUATION', '*') || this.match('PUNCTUATION', '/') || 
-           this.match('PUNCTUATION', '%')) {
+    while (this.match('PUNCTUATION', '*') || this.match('PUNCTUATION', '/') || this.match('PUNCTUATION', '%')) {
       const op = this.advance()!.value;
       const right = this.parseUnary();
       left = { type: 'binary_op', operator: op, left, right } as IRBinaryOp;
@@ -654,10 +767,17 @@ export class CParser {
   }
 
   private parseUnary(): IRNode {
-    if (this.match('PUNCTUATION', '!') || this.match('PUNCTUATION', '-') ||
-        this.match('OPERATOR', '++') || this.match('OPERATOR', '--')) {
+    // Prefix operators
+    if (this.match('PUNCTUATION', '!') || this.match('PUNCTUATION', '-') || this.match('PUNCTUATION', '+')) {
       const op = this.advance()!.value;
       const operand = this.parseUnary();
+      return { type: 'unary_op', operator: op, operand } as IRNode & { operator: string; operand: IRNode };
+    }
+    
+    // Prefix increment/decrement
+    if (this.match('OPERATOR', '++') || this.match('OPERATOR', '--')) {
+      const op = this.advance()!.value;
+      const operand = this.parsePostfix();
       return { type: 'unary_op', operator: op, operand } as IRNode & { operator: string; operand: IRNode };
     }
     
@@ -668,9 +788,13 @@ export class CParser {
     let expr = this.parsePrimary();
     
     while (true) {
-      if (this.match('OPERATOR', '++') || this.match('OPERATOR', '--')) {
-        const op = this.advance()!.value;
-        expr = { type: 'unary_op', operator: op + '_post', operand: expr } as IRNode & { operator: string; operand: IRNode };
+      // Postfix increment/decrement
+      if (this.match('OPERATOR', '++')) {
+        this.advance();
+        expr = { type: 'unary_op', operator: '++_post', operand: expr } as IRNode & { operator: string; operand: IRNode };
+      } else if (this.match('OPERATOR', '--')) {
+        this.advance();
+        expr = { type: 'unary_op', operator: '--_post', operand: expr } as IRNode & { operator: string; operand: IRNode };
       } else {
         break;
       }
@@ -680,7 +804,7 @@ export class CParser {
   }
 
   private parsePrimary(): IRNode {
-    // Parenthesized expression
+    // Parentheses
     if (this.match('PUNCTUATION', '(')) {
       this.advance();
       const expr = this.parseExpression();
@@ -688,37 +812,29 @@ export class CParser {
       return expr;
     }
     
-    // String literal
-    if (this.match('STRING')) {
-      const token = this.advance()!;
-      return { type: 'literal', value: token.value.slice(1, -1), dataType: 'string' } as IRLiteral;
-    }
-    
-    // Char literal
-    if (this.match('CHAR')) {
-      const token = this.advance()!;
-      return { type: 'literal', value: token.value.slice(1, -1), dataType: 'char' } as IRLiteral;
-    }
-    
     // Number
     if (this.match('NUMBER')) {
       const token = this.advance()!;
-      const value = token.value.replace(/[fFlL]/g, '');
-      const isFloat = value.includes('.') || token.value.includes('f');
-      return {
-        type: 'literal',
-        value: isFloat ? parseFloat(value) : parseInt(value),
-        dataType: isFloat ? 'float' : 'int',
-      } as IRLiteral;
+      const value = token.value.includes('.') ? parseFloat(token.value) : parseInt(token.value);
+      const dataType: DataType = token.value.includes('.') ? 'float' : 'int';
+      return { type: 'literal', value, dataType } as IRLiteral;
     }
     
-    // NULL
-    if (this.match('KEYWORD', 'NULL')) {
-      this.advance();
-      return { type: 'literal', value: 'null', dataType: 'void' } as IRLiteral;
+    // String
+    if (this.match('STRING')) {
+      const token = this.advance()!;
+      const value = token.value.slice(1, -1); // Remove quotes
+      return { type: 'literal', value, dataType: 'string' } as IRLiteral;
     }
     
-    // true/false
+    // Char
+    if (this.match('CHAR')) {
+      const token = this.advance()!;
+      const value = token.value.slice(1, -1);
+      return { type: 'literal', value, dataType: 'char' } as IRLiteral;
+    }
+    
+    // Boolean and null
     if (this.match('KEYWORD', 'true')) {
       this.advance();
       return { type: 'literal', value: true, dataType: 'bool' } as IRLiteral;
@@ -727,12 +843,17 @@ export class CParser {
       this.advance();
       return { type: 'literal', value: false, dataType: 'bool' } as IRLiteral;
     }
+    if (this.match('KEYWORD', 'NULL')) {
+      this.advance();
+      return { type: 'literal', value: 'null', dataType: 'void' } as IRLiteral;
+    }
     
     // Identifier or function call
-    if (this.match('IDENTIFIER') || this.match('KEYWORD')) {
+    if (this.match('IDENTIFIER')) {
       const token = this.advance()!;
+      let name = token.value;
       
-      // Function call
+      // Check for function call
       if (this.match('PUNCTUATION', '(')) {
         this.advance();
         const args: IRNode[] = [];
@@ -741,15 +862,28 @@ export class CParser {
           if (!this.consume('PUNCTUATION', ',')) break;
         }
         this.consume('PUNCTUATION', ')');
-        return { type: 'call', callee: token.value, args } as IRCall;
+        return { type: 'call', callee: name, args } as IRCall;
       }
       
-      return { type: 'identifier', name: token.value } as IRIdentifier;
+      // Check for array access
+      if (this.match('PUNCTUATION', '[')) {
+        this.advance();
+        const index = this.parseExpression();
+        this.consume('PUNCTUATION', ']');
+        // Treat as array access
+        return { type: 'identifier', name: `${name}[${this.generateSimpleExpr(index)}]` } as IRIdentifier;
+      }
+      
+      return { type: 'identifier', name } as IRIdentifier;
     }
     
-    // Fallback
-    this.advance();
-    return { type: 'literal', value: '', dataType: 'string' } as IRLiteral;
+    return { type: 'literal', value: 0, dataType: 'int' } as IRLiteral;
+  }
+
+  private generateSimpleExpr(node: IRNode): string {
+    if (node.type === 'literal') return String((node as IRLiteral).value);
+    if (node.type === 'identifier') return (node as IRIdentifier).name;
+    return '0';
   }
 
   private mapCType(type: string): DataType {
@@ -761,6 +895,6 @@ export class CParser {
       'void': 'void',
       'bool': 'bool',
     };
-    return typeMap[type] || 'auto';
+    return typeMap[type] || 'int';
   }
 }
