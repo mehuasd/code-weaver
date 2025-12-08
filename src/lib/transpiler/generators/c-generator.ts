@@ -71,6 +71,7 @@ export class CGenerator {
     }
     
     // Generate functions (but wrap 'main' in int main)
+    let hasReturnInMain = false;
     for (const func of functions) {
       const f = func as IRFunction;
       if (f.name === 'main') {
@@ -78,10 +79,13 @@ export class CGenerator {
         lines.push('int main() {');
         this.indent++;
         for (const stmt of f.body) {
+          if (stmt.type === 'return') hasReturnInMain = true;
           const code = this.generateNode(stmt);
           if (code) lines.push(code);
         }
-        lines.push(`${this.getIndent()}return 0;`);
+        if (!hasReturnInMain) {
+          lines.push(`${this.getIndent()}return 0;`);
+        }
         this.indent--;
         lines.push('}');
       } else {
