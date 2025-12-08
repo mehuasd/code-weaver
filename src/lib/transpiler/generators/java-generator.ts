@@ -40,11 +40,13 @@ export class JavaGenerator {
   private indentStr = '    ';
   private usesScanner = false;
   private className = 'Main';
+  private isInsideVoidMain = false;
 
   generate(ir: IRProgram, className = 'Main'): string {
     this.indent = 0;
     this.usesScanner = false;
     this.className = className;
+    this.isInsideVoidMain = false;
     
     this.analyzeProgram(ir);
     
@@ -85,14 +87,18 @@ export class JavaGenerator {
         const funcNode = func as IRFunction;
         if (funcNode.name === 'main') {
           // Generate main method
+          this.isInsideVoidMain = true;
           lines.push(`${this.getIndent()}public static void main(String[] args) {`);
           this.indent++;
           for (const stmt of funcNode.body) {
+            // Skip return 0 in void main
+            if (this.shouldSkipReturnInMain(stmt)) continue;
             const code = this.generateNode(stmt);
             if (code) lines.push(code);
           }
           this.indent--;
           lines.push(`${this.getIndent()}}`);
+          this.isInsideVoidMain = false;
         } else {
           const code = this.generateFunction(funcNode, true);
           if (code) lines.push(code);
@@ -101,14 +107,18 @@ export class JavaGenerator {
       
       // If no main function, generate one with remaining content
       if (!functions.some(f => (f as IRFunction).name === 'main') && mainContent.length > 0) {
+        this.isInsideVoidMain = true;
         lines.push(`${this.getIndent()}public static void main(String[] args) {`);
         this.indent++;
         for (const node of mainContent) {
+          // Skip return 0 in void main
+          if (this.shouldSkipReturnInMain(node)) continue;
           const code = this.generateNode(node);
           if (code) lines.push(code);
         }
         this.indent--;
         lines.push(`${this.getIndent()}}`);
+        this.isInsideVoidMain = false;
       }
       
       this.indent--;
@@ -116,6 +126,18 @@ export class JavaGenerator {
     }
     
     return lines.join('\n');
+  }
+  
+  private shouldSkipReturnInMain(node: IRNode): boolean {
+    if (!this.isInsideVoidMain) return false;
+    if (node.type === 'return') {
+      const ret = node as IRReturn;
+      // Skip return 0 or return with int value
+      if (ret.value && isIRLiteral(ret.value) && typeof ret.value.value === 'number') {
+        return true;
+      }
+    }
+    return false;
   }
 
   private analyzeProgram(ir: IRProgram): void {
@@ -353,6 +375,12 @@ export class JavaGenerator {
 
   private generateReturn(node: IRReturn): string {
     const indent = this.getIndent();
+    
+    // Skip return with numeric value in void main
+    if (this.isInsideVoidMain && node.value && isIRLiteral(node.value) && typeof node.value.value === 'number') {
+      return '';
+    }
+    
     if (node.value) {
       return `${indent}return ${this.generateExpression(node.value)};`;
     }
@@ -384,8 +412,11 @@ export class JavaGenerator {
   }
   
   private parseFString(str: string): string {
+    // Clean up trailing newline
+    const cleaned = str.replace(/\\n$/, '');
+    
     // Convert {var} to " + var + "
-    const result = str.replace(/\{([^}]+)\}/g, '" + $1 + "');
+    const result = cleaned.replace(/\{([^}]+)\}/g, '" + $1 + "');
     return `"${result}"`.replace(/"" \+ /g, '').replace(/ \+ ""/g, '');
   }
 
@@ -501,7 +532,7 @@ export class JavaGenerator {
       case 'double': return '0.0';
       case 'string': return '""';
       case 'bool': return 'false';
-      case 'char': return "'\\0'";
+      case 'char': return "' '";
       default: return 'null';
     }
   }

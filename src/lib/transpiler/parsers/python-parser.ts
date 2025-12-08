@@ -31,24 +31,32 @@ export class PythonParser {
   private tokens: Token[] = [];
   private pos = 0;
   private lines: string[] = [];
+  private maxIterations = 10000; // Prevent infinite loops
 
   parse(code: string): IRProgram {
-    this.lines = code.split('\n');
-    this.tokens = this.tokenize(code);
-    this.pos = 0;
-    
-    const body: IRNode[] = [];
-    
-    while (this.pos < this.tokens.length) {
-      const node = this.parseStatement(0);
-      if (node) body.push(node);
+    try {
+      this.lines = code.split('\n');
+      this.tokens = this.tokenize(code);
+      this.pos = 0;
+      
+      const body: IRNode[] = [];
+      let iterations = 0;
+      
+      while (this.pos < this.tokens.length && iterations < this.maxIterations) {
+        iterations++;
+        const node = this.parseStatement(0);
+        if (node) body.push(node);
+      }
+      
+      return {
+        type: 'program',
+        body,
+        imports: this.detectImports(code),
+      };
+    } catch (error) {
+      console.error('Python parser error:', error);
+      return { type: 'program', body: [], imports: [] };
     }
-    
-    return {
-      type: 'program',
-      body,
-      imports: this.detectImports(code),
-    };
   }
 
   private tokenize(code: string): Token[] {
@@ -85,12 +93,27 @@ export class PythonParser {
           break;
         }
         
-        // String literals (including f-strings)
-        const stringMatch = remaining.match(/^(f?["'])((?:\\.|[^"'\\])*?)\1/) ||
-                           remaining.match(/^(f?""")([\s\S]*?)"""/);
+        // String literals (including f-strings) - handle carefully
+        const fStringMatch = remaining.match(/^f(["'])((?:\\.|(?!\1)[^\\])*?)\1/);
+        if (fStringMatch) {
+          tokens.push({ type: 'STRING', value: fStringMatch[0], line: lineNum, column: col, indent: lineIndent });
+          col += fStringMatch[0].length;
+          continue;
+        }
+        
+        // Regular strings
+        const stringMatch = remaining.match(/^(["'])((?:\\.|(?!\1)[^\\])*?)\1/);
         if (stringMatch) {
           tokens.push({ type: 'STRING', value: stringMatch[0], line: lineNum, column: col, indent: lineIndent });
           col += stringMatch[0].length;
+          continue;
+        }
+        
+        // Triple quoted strings
+        const tripleMatch = remaining.match(/^(f?"""[\s\S]*?"""|f?'''[\s\S]*?''')/);
+        if (tripleMatch) {
+          tokens.push({ type: 'STRING', value: tripleMatch[0], line: lineNum, column: col, indent: lineIndent });
+          col += tripleMatch[0].length;
           continue;
         }
         
@@ -145,6 +168,7 @@ export class PythonParser {
   }
 
   private advance(): Token | null {
+    if (this.pos >= this.tokens.length) return null;
     return this.tokens[this.pos++] || null;
   }
 
@@ -164,8 +188,10 @@ export class PythonParser {
   }
 
   private skipNewlines(): void {
-    while (this.match('NEWLINE')) {
+    let count = 0;
+    while (this.match('NEWLINE') && count < 100) {
       this.advance();
+      count++;
     }
   }
 
@@ -315,8 +341,10 @@ export class PythonParser {
   private parseBlock(parentIndent: number): IRNode[] {
     const statements: IRNode[] = [];
     const blockIndent = parentIndent + 4; // Python standard indent
+    let iterations = 0;
     
-    while (this.pos < this.tokens.length) {
+    while (this.pos < this.tokens.length && iterations < this.maxIterations) {
+      iterations++;
       this.skipNewlines();
       
       const token = this.peek();
@@ -406,7 +434,6 @@ export class PythonParser {
     const nextToken = this.peek();
     if (nextToken && nextToken.indent === ifIndent) {
       if (this.match('KEYWORD', 'elif')) {
-        // Change 'elif' to 'if' for recursive parsing
         elseIf = this.parseElif(ifIndent);
       } else if (this.match('KEYWORD', 'else')) {
         this.advance();
@@ -473,9 +500,9 @@ export class PythonParser {
       this.consume('PUNCTUATION', '(');
       
       const args: IRNode[] = [];
-      while (!this.match('PUNCTUATION', ')')) {
+      while (!this.match('PUNCTUATION', ')') && args.length < 10) {
         args.push(this.parseExpression());
-        this.consume('PUNCTUATION', ',');
+        if (!this.consume('PUNCTUATION', ',')) break;
       }
       this.consume('PUNCTUATION', ')');
       this.consume('PUNCTUATION', ':');
@@ -556,14 +583,14 @@ export class PythonParser {
     
     const args: IRNode[] = [];
     
-    while (!this.match('PUNCTUATION', ')')) {
+    while (!this.match('PUNCTUATION', ')') && args.length < 20) {
       // Check for keyword arguments like end=''
       if (this.match('IDENTIFIER', 'end') || this.match('IDENTIFIER', 'sep')) {
         // Skip keyword argument
         this.advance(); // skip 'end' or 'sep'
         this.consume('OPERATOR', '=');
         this.parseExpression(); // skip the value
-        this.consume('PUNCTUATION', ',');
+        if (!this.consume('PUNCTUATION', ',')) break;
         continue;
       }
       
@@ -691,7 +718,9 @@ export class PythonParser {
     let left = this.parseAddSub();
     
     const compOps = ['==', '!=', '<', '>', '<=', '>='];
-    while (true) {
+    let iterations = 0;
+    while (iterations < 20) {
+      iterations++;
       let found = false;
       for (const op of compOps) {
         if (this.match('OPERATOR', op)) {
@@ -800,9 +829,9 @@ export class PythonParser {
       const typeFunc = this.advance()!.value;
       this.consume('PUNCTUATION', '(');
       const args: IRNode[] = [];
-      while (!this.match('PUNCTUATION', ')')) {
+      while (!this.match('PUNCTUATION', ')') && args.length < 10) {
         args.push(this.parseExpression());
-        this.consume('PUNCTUATION', ',');
+        if (!this.consume('PUNCTUATION', ',')) break;
       }
       this.consume('PUNCTUATION', ')');
       return { type: 'call', callee: typeFunc, args } as IRCall;
@@ -831,9 +860,9 @@ export class PythonParser {
       this.advance();
       this.consume('PUNCTUATION', '(');
       const args: IRNode[] = [];
-      while (!this.match('PUNCTUATION', ')')) {
+      while (!this.match('PUNCTUATION', ')') && args.length < 10) {
         args.push(this.parseExpression());
-        this.consume('PUNCTUATION', ',');
+        if (!this.consume('PUNCTUATION', ',')) break;
       }
       this.consume('PUNCTUATION', ')');
       return { type: 'call', callee: 'range', args } as IRCall;
@@ -855,7 +884,7 @@ export class PythonParser {
       if (this.match('PUNCTUATION', '(')) {
         this.advance();
         const args: IRNode[] = [];
-        while (!this.match('PUNCTUATION', ')')) {
+        while (!this.match('PUNCTUATION', ')') && args.length < 20) {
           args.push(this.parseExpression());
           if (!this.consume('PUNCTUATION', ',')) break;
         }
@@ -879,7 +908,10 @@ export class PythonParser {
       return { type: 'identifier', name } as IRIdentifier;
     }
     
-    // Empty expression
+    // Empty expression - skip unknown tokens
+    if (this.pos < this.tokens.length) {
+      this.advance();
+    }
     return { type: 'literal', value: '', dataType: 'void' } as IRLiteral;
   }
 

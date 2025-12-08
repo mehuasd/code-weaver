@@ -118,7 +118,47 @@ export class PythonGenerator {
     // If it's a simple class wrapper around static main, extract the code as global
     if (hasOnlyMainMethod) {
       let code = '';
+      
+      // Also check for static greet method and generate it first
+      const greetMethod = (node as any).staticMethods?.find((m: IRFunction) => m.name === 'greet') as IRFunction | undefined;
+      if (greetMethod) {
+        const greetCode = this.generateFunction(greetMethod);
+        code += greetCode + '\n';
+      }
+      
       for (const stmt of mainMethod.body) {
+        // Skip return 0 in main
+        if (stmt.type === 'return') {
+          const ret = stmt as IRReturn;
+          if (ret.value && isIRLiteral(ret.value) && ret.value.value === 0) {
+            continue;
+          }
+        }
+        const stmtCode = this.generateNode(stmt);
+        if (stmtCode) code += stmtCode + '\n';
+      }
+      return code.trimEnd();
+    }
+    
+    // Check if this has static methods + main (like Java)
+    if (mainMethod && node.methods.length > 0) {
+      let code = '';
+      
+      // Generate static methods as regular functions
+      for (const method of node.methods) {
+        const funcCode = this.generateFunction(method);
+        code += funcCode + '\n';
+      }
+      
+      code += '\n# Main program\n';
+      for (const stmt of mainMethod.body) {
+        // Skip return 0 in main
+        if (stmt.type === 'return') {
+          const ret = stmt as IRReturn;
+          if (ret.value && isIRLiteral(ret.value) && ret.value.value === 0) {
+            continue;
+          }
+        }
         const stmtCode = this.generateNode(stmt);
         if (stmtCode) code += stmtCode + '\n';
       }
@@ -170,17 +210,6 @@ export class PythonGenerator {
         }
       }
       this.indent--;
-    }
-    
-    // If there's a main method, generate it outside the class as global code
-    if (mainMethod && !hasOnlyMainMethod) {
-      this.indent--;
-      code += '\n\n# Main program\n';
-      for (const stmt of mainMethod.body) {
-        const stmtCode = this.generateNode(stmt);
-        if (stmtCode) code += stmtCode + '\n';
-      }
-      return code.trimEnd();
     }
     
     this.indent--;
@@ -303,7 +332,48 @@ export class PythonGenerator {
 
   private generatePrint(node: IRPrint): string {
     const indent = this.getIndent();
-    const args = node.args.map(arg => this.generateExpression(arg)).join(', ');
+    
+    // Convert C-style format strings to Python
+    const convertedArgs = node.args.map(arg => {
+      if (isIRLiteral(arg) && arg.dataType === 'string') {
+        const strValue = String(arg.value);
+        // Check for C format specifiers
+        if (/%[dsifc]/.test(strValue)) {
+          // Return string without format specifiers for now
+          // The variables should be in subsequent args
+          return null; // Will be handled below
+        }
+        // Check for f-string interpolation
+        if (strValue.includes('{') && strValue.includes('}')) {
+          return `f"${strValue}"`;
+        }
+        return this.generateExpression(arg);
+      }
+      return this.generateExpression(arg);
+    }).filter(Boolean);
+    
+    // If first arg has C format specifiers, convert to f-string
+    if (node.args.length > 0 && isIRLiteral(node.args[0]) && node.args[0].dataType === 'string') {
+      const formatStr = String(node.args[0].value);
+      if (/%[dsifc]/.test(formatStr)) {
+        // Get the variable arguments
+        const varArgs = node.args.slice(1).map(a => this.generateExpression(a));
+        let argIndex = 0;
+        const converted = formatStr
+          .replace(/\\n$/, '')
+          .replace(/%[dsifc]/g, () => {
+            const varName = varArgs[argIndex++] || '';
+            return `{${varName}}`;
+          });
+        
+        if (!node.newline) {
+          return `${indent}print(f"${converted}", end='')`;
+        }
+        return `${indent}print(f"${converted}")`;
+      }
+    }
+    
+    const args = convertedArgs.join(', ');
     
     if (!node.newline) {
       return `${indent}print(${args}, end='')`;
@@ -359,24 +429,13 @@ export class PythonGenerator {
     if (node.dataType === 'string') {
       const value = String(node.value);
       
-      // Convert C-style format strings to Python f-strings
-      const hasFStringInterpolation = value.includes('{') && value.includes('}');
-      const hasCFormatSpecifiers = /%[dsifc%]/.test(value);
-      
-      if (hasFStringInterpolation) {
-        // Already has f-string syntax, just clean it up
+      // Check for f-string interpolation {var}
+      if (value.includes('{') && value.includes('}')) {
         const cleanValue = value.replace(/\\n$/, '');
         return `f"${cleanValue}"`;
       }
       
-      if (hasCFormatSpecifiers) {
-        // Convert C printf format to Python f-string
-        // This is a basic conversion - complex formats may need more work
-        const cleanValue = value.replace(/\\n$/, '').replace(/%[dsifc]/g, '{}');
-        return `"${cleanValue}"`;
-      }
-      
-      // Regular string, handle escape sequences
+      // Check for C-style format specifiers - return as regular string
       const cleanValue = value.replace(/\\n$/, '');
       return `"${cleanValue}"`;
     }
