@@ -199,6 +199,25 @@ export class CGenerator {
   private generateClass(node: IRClass): string {
     // C doesn't have classes, convert to struct with function pointers
     const indent = this.getIndent();
+    
+    // Check if this is a Java-style class with only a static main method
+    const mainMethod = (node as any).mainMethod as IRFunction | undefined;
+    const hasOnlyMainMethod = mainMethod && node.methods.length === 0 && node.members.length === 0;
+    
+    // If it's a simple class wrapper around static main, just generate int main()
+    if (hasOnlyMainMethod) {
+      let code = `${indent}int main() {\n`;
+      this.indent++;
+      for (const stmt of mainMethod.body) {
+        const stmtCode = this.generateNode(stmt);
+        if (stmtCode) code += stmtCode + '\n';
+      }
+      code += `${this.getIndent()}return 0;\n`;
+      this.indent--;
+      code += `${indent}}`;
+      return code;
+    }
+    
     let code = '';
     
     // Forward declaration
@@ -220,7 +239,8 @@ export class CGenerator {
     // Method pointers
     for (const method of node.methods) {
       const returnType = this.mapType(method.returnType);
-      code += `${this.getIndent()}${returnType} (*${method.name})(${node.name}*);\n`;
+      const params = method.params.map(p => this.mapType(p.dataType)).join(', ');
+      code += `${this.getIndent()}${returnType} (*${method.name})(${node.name}*${params ? ', ' + params : ''});\n`;
     }
     
     this.indent--;
@@ -258,7 +278,20 @@ export class CGenerator {
     }
     
     this.indent--;
-    code += `${indent}}`;
+    code += `${indent}}\n`;
+    
+    // If there's a main method, generate int main() with its body
+    if (mainMethod) {
+      code += `\n${indent}int main() {\n`;
+      this.indent++;
+      for (const stmt of mainMethod.body) {
+        const stmtCode = this.generateNode(stmt);
+        if (stmtCode) code += stmtCode + '\n';
+      }
+      code += `${this.getIndent()}return 0;\n`;
+      this.indent--;
+      code += `${indent}}`;
+    }
     
     return code;
   }
