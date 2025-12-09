@@ -113,45 +113,23 @@ export class PythonGenerator {
     
     // Check if this is a Java-style class with only a static main method
     const mainMethod = (node as any).mainMethod as IRFunction | undefined;
+    const staticMethods = (node as any).staticMethods as IRFunction[] | undefined;
     const hasOnlyMainMethod = mainMethod && node.methods.length === 0 && node.members.length === 0;
     
     // If it's a simple class wrapper around static main, extract the code as global
-    if (hasOnlyMainMethod) {
+    if (hasOnlyMainMethod || (mainMethod && staticMethods)) {
       let code = '';
       
-      // Also check for static greet method and generate it first
-      const greetMethod = (node as any).staticMethods?.find((m: IRFunction) => m.name === 'greet') as IRFunction | undefined;
-      if (greetMethod) {
-        const greetCode = this.generateFunction(greetMethod);
-        code += greetCode + '\n';
-      }
-      
-      for (const stmt of mainMethod.body) {
-        // Skip return 0 in main
-        if (stmt.type === 'return') {
-          const ret = stmt as IRReturn;
-          if (ret.value && isIRLiteral(ret.value) && ret.value.value === 0) {
-            continue;
-          }
+      // Generate static methods as regular Python functions
+      if (staticMethods) {
+        for (const method of staticMethods) {
+          const funcCode = this.generateFunction(method);
+          code += funcCode + '\n';
         }
-        const stmtCode = this.generateNode(stmt);
-        if (stmtCode) code += stmtCode + '\n';
-      }
-      return code.trimEnd();
-    }
-    
-    // Check if this has static methods + main (like Java)
-    if (mainMethod && node.methods.length > 0) {
-      let code = '';
-      
-      // Generate static methods as regular functions
-      for (const method of node.methods) {
-        const funcCode = this.generateFunction(method);
-        code += funcCode + '\n';
       }
       
-      code += '\n# Main program\n';
-      for (const stmt of mainMethod.body) {
+      code += '# Main program\n';
+      for (const stmt of mainMethod!.body) {
         // Skip return 0 in main
         if (stmt.type === 'return') {
           const ret = stmt as IRReturn;

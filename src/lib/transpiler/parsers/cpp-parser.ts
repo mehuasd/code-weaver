@@ -220,10 +220,11 @@ export class CppParser {
 
   private isType(token: Token | null): boolean {
     if (!token) return false;
-    return (token.type === 'KEYWORD' && 
-            ['int', 'float', 'double', 'char', 'void', 'bool', 'auto', 'const', 'static', 'string'].includes(token.value)) ||
+    // Only treat known type keywords as types, NOT arbitrary identifiers
+    const typeKeywords = ['int', 'float', 'double', 'char', 'void', 'bool', 'auto', 'const', 'static', 'string', 'unsigned', 'signed', 'long', 'short'];
+    return (token.type === 'KEYWORD' && typeKeywords.includes(token.value)) ||
            (token.type === 'IDENTIFIER' && token.value === 'string') ||
-           token.type === 'IDENTIFIER';
+           (token.type === 'IDENTIFIER' && token.value === 'std'); // std:: types
   }
 
   private parseClass(): IRClass {
