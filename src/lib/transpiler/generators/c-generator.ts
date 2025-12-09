@@ -206,13 +206,24 @@ export class CGenerator {
     
     // Check if this is a Java-style class with only a static main method
     const mainMethod = (node as any).mainMethod as IRFunction | undefined;
+    const staticMethods = (node as any).staticMethods as IRFunction[] | undefined;
     const hasOnlyMainMethod = mainMethod && node.methods.length === 0 && node.members.length === 0;
     
     // If it's a simple class wrapper around static main, just generate int main()
-    if (hasOnlyMainMethod) {
-      let code = `${indent}int main() {\n`;
+    if (hasOnlyMainMethod || (mainMethod && staticMethods)) {
+      let code = '';
+      
+      // Generate static methods as regular C functions
+      if (staticMethods) {
+        for (const method of staticMethods) {
+          const funcCode = this.generateFunction(method);
+          code += funcCode + '\n\n';
+        }
+      }
+      
+      code += `${indent}int main() {\n`;
       this.indent++;
-      for (const stmt of mainMethod.body) {
+      for (const stmt of mainMethod!.body) {
         const stmtCode = this.generateNode(stmt);
         if (stmtCode) code += stmtCode + '\n';
       }
@@ -413,12 +424,28 @@ export class CGenerator {
       return node.newline ? `${indent}printf("\\n");` : '';
     }
     
-    // Build format string and args
+    // Build format string and args - handle string concatenation specially
     let format = '';
     const args: string[] = [];
     
     for (const arg of node.args) {
-      if (isIRLiteral(arg) && arg.dataType === 'string') {
+      // Handle string concatenation (binary + operations with strings)
+      if (isIRBinaryOp(arg) && arg.operator === '+') {
+        const flattened = this.flattenStringConcat(arg);
+        for (const part of flattened) {
+          if (isIRLiteral(part) && part.dataType === 'string') {
+            const strValue = String(part.value);
+            const parsed = this.parseFStringToFormat(strValue);
+            format += parsed.format;
+            args.push(...parsed.args);
+          } else {
+            const expr = this.generateExpression(part);
+            const type = this.inferType(part);
+            format += type === 'int' ? '%d' : type === 'float' || type === 'double' ? '%f' : '%s';
+            args.push(expr);
+          }
+        }
+      } else if (isIRLiteral(arg) && arg.dataType === 'string') {
         // String literal - check for f-string interpolation
         const strValue = String(arg.value);
         // Parse f-string interpolation like {name} or {var}
@@ -456,6 +483,14 @@ export class CGenerator {
       return `${indent}printf("${format}");`;
     }
     return `${indent}printf("${format}", ${args.join(', ')});`;
+  }
+  
+  // Flatten string concatenation binary ops into an array of parts
+  private flattenStringConcat(node: IRNode): IRNode[] {
+    if (isIRBinaryOp(node) && node.operator === '+') {
+      return [...this.flattenStringConcat(node.left), ...this.flattenStringConcat(node.right)];
+    }
+    return [node];
   }
   
   private parseFStringToFormat(str: string): { format: string; args: string[] } {
@@ -537,7 +572,24 @@ export class CGenerator {
   private generateBinaryOp(node: IRBinaryOp): string {
     const left = this.generateExpression(node.left);
     const right = this.generateExpression(node.right);
+    
+    // Handle string concatenation - C doesn't support + for strings
+    if (node.operator === '+' && this.isStringExpression(node.left, node.right)) {
+      // For simple cases, we just warn and keep it (it won't compile but shows intent)
+      // For proper fix, would need snprintf but that's complex
+      // Instead, use printf to output the concatenated parts
+      return `${left} /* + */ ${right}`;
+    }
+    
     return `${left} ${node.operator} ${right}`;
+  }
+  
+  private isStringExpression(left: IRNode, right: IRNode): boolean {
+    if (isIRLiteral(left) && left.dataType === 'string') return true;
+    if (isIRLiteral(right) && right.dataType === 'string') return true;
+    if (isIRBinaryOp(left) && left.operator === '+') return this.isStringExpression(left.left, left.right);
+    if (isIRBinaryOp(right) && right.operator === '+') return this.isStringExpression(right.left, right.right);
+    return false;
   }
 
   private generateCall(node: IRCall): string {

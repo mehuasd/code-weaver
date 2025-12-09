@@ -225,9 +225,10 @@ export class JavaParser {
 
   private isType(token: Token | null): boolean {
     if (!token) return false;
-    return (token.type === 'KEYWORD' && 
-            ['int', 'float', 'double', 'boolean', 'char', 'void', 'String'].includes(token.value)) ||
-           token.type === 'IDENTIFIER';
+    // Only recognize actual Java type keywords, NOT arbitrary identifiers (which could be function calls)
+    const typeKeywords = ['int', 'float', 'double', 'boolean', 'char', 'void', 'String', 'byte', 'short', 'long'];
+    return (token.type === 'KEYWORD' && typeKeywords.includes(token.value)) ||
+           (token.type === 'IDENTIFIER' && token.value === 'String');
   }
 
   private parseClass(): IRClass {
@@ -247,6 +248,7 @@ export class JavaParser {
     const methods: IRFunction[] = [];
     let constructor: IRFunction | undefined;
     let mainMethod: IRFunction | undefined;
+    const staticMethods: IRFunction[] = [];
     
     while (!this.match('PUNCTUATION', '}') && this.pos < this.tokens.length) {
       // Track modifiers to detect static
@@ -276,6 +278,9 @@ export class JavaParser {
           // Check for main method
           if (func.name === 'main' && isStatic) {
             mainMethod = func;
+          } else if (isStatic) {
+            // Static methods should be extracted as global functions
+            staticMethods.push(func);
           } else {
             methods.push(func);
           }
@@ -303,6 +308,11 @@ export class JavaParser {
     // If there's a main method, attach it for generators to handle
     if (mainMethod) {
       (result as any).mainMethod = mainMethod;
+    }
+    
+    // Attach static methods separately so generators can treat them as global functions
+    if (staticMethods.length > 0) {
+      (result as any).staticMethods = staticMethods;
     }
     
     return result;

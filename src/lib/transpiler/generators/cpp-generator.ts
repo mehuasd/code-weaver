@@ -194,13 +194,24 @@ export class CppGenerator {
     
     // Check if this is a Java-style class with only a static main method
     const mainMethod = (node as any).mainMethod as IRFunction | undefined;
+    const staticMethods = (node as any).staticMethods as IRFunction[] | undefined;
     const hasOnlyMainMethod = mainMethod && node.methods.length === 0 && node.members.length === 0;
     
     // If it's a simple class wrapper around static main, just generate int main()
-    if (hasOnlyMainMethod) {
-      let code = `${indent}int main() {\n`;
+    if (hasOnlyMainMethod || (mainMethod && staticMethods)) {
+      let code = '';
+      
+      // Generate static methods as regular C++ functions
+      if (staticMethods) {
+        for (const method of staticMethods) {
+          const funcCode = this.generateFunction(method);
+          code += funcCode + '\n\n';
+        }
+      }
+      
+      code += `${indent}int main() {\n`;
       this.indent++;
-      for (const stmt of mainMethod.body) {
+      for (const stmt of mainMethod!.body) {
         const stmtCode = this.generateNode(stmt);
         if (stmtCode) code += stmtCode + '\n';
       }
