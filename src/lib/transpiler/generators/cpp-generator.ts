@@ -120,6 +120,11 @@ export class CppGenerator {
       if (isIRClass(node)) {
         node.members.forEach(analyze);
         node.methods.forEach(analyze);
+        // Also analyze Java-style mainMethod and staticMethods
+        const mainMethod = (node as any).mainMethod as IRFunction | undefined;
+        const staticMethods = (node as any).staticMethods as IRFunction[] | undefined;
+        if (mainMethod) analyze(mainMethod);
+        if (staticMethods) staticMethods.forEach(analyze);
       }
       if (isIRIf(node)) {
         node.thenBranch.forEach(analyze);

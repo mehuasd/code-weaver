@@ -118,10 +118,16 @@ export class CGenerator {
       if (isIRFunction(node)) {
         node.body.forEach(analyze);
         node.params.forEach(p => { if (p.dataType === 'bool') this.usesBool = true; });
+        if (node.returnType === 'bool') this.usesBool = true;
       }
       if (isIRClass(node)) {
         node.members.forEach(analyze);
         node.methods.forEach(analyze);
+        // Also analyze Java-style mainMethod and staticMethods
+        const mainMethod = (node as any).mainMethod as IRFunction | undefined;
+        const staticMethods = (node as any).staticMethods as IRFunction[] | undefined;
+        if (mainMethod) analyze(mainMethod);
+        if (staticMethods) staticMethods.forEach(analyze);
       }
       if (isIRIf(node)) {
         node.thenBranch.forEach(analyze);
