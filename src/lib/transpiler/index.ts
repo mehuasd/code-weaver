@@ -1,4 +1,4 @@
-import { IRProgram } from './ir';
+import { IRProgram, isIRClass } from './ir';
 import { PythonParser } from './parsers/python-parser';
 import { CParser } from './parsers/c-parser';
 import { CppParser } from './parsers/cpp-parser';
@@ -30,6 +30,33 @@ export class Transpiler {
   private cppGenerator = new CppGenerator();
   private javaGenerator = new JavaGenerator();
 
+  // Check if IR contains classes that are not simple Main wrappers
+  private hasNonMainClasses(ir: IRProgram): boolean {
+    for (const node of ir.body) {
+      if (isIRClass(node)) {
+        // If it's a Main class with only static main method, it's just a wrapper
+        const mainMethod = (node as any).mainMethod;
+        const staticMethods = (node as any).staticMethods;
+        const hasOnlyMainMethod = mainMethod && node.methods.length === 0 && node.members.length === 0;
+        
+        // If it has instance methods, members, or constructor, it's a real class
+        if (node.methods.length > 0 || node.members.length > 0 || node.constructor) {
+          // Check if it's not just a Main wrapper
+          if (node.name !== 'Main' || !hasOnlyMainMethod) {
+            return true;
+          }
+        }
+        
+        // If there are static methods (other than main), that's okay for C
+        if (!staticMethods || staticMethods.length === 0) {
+          // Only has main method, treat as wrapper
+          continue;
+        }
+      }
+    }
+    return false;
+  }
+
   transpile(sourceCode: string, sourceLanguage: Language): TranspileResult {
     const errors: string[] = [];
     
@@ -60,6 +87,9 @@ export class Transpiler {
         errors: [],
       };
       
+      // Check for C compatibility
+      const hasClasses = this.hasNonMainClasses(ir);
+      
       try {
         result.python = this.pythonGenerator.generate(ir);
       } catch (e) {
@@ -67,7 +97,11 @@ export class Transpiler {
       }
       
       try {
-        result.c = this.cGenerator.generate(ir);
+        if (hasClasses) {
+          result.c = '// C does not support classes';
+        } else {
+          result.c = this.cGenerator.generate(ir);
+        }
       } catch (e) {
         errors.push(`C generation error: ${e}`);
       }

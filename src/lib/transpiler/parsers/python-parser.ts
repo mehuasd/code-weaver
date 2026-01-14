@@ -633,6 +633,47 @@ export class PythonParser {
       if (left.type === 'identifier') {
         const target = (left as IRIdentifier).name;
         
+        // Special case: assignment from input with type cast like i=int(input())
+        // The value will be a call to 'int' with an IRInput arg
+        if (value.type === 'call') {
+          const call = value as IRCall;
+          const typeMap: Record<string, DataType> = {
+            'int': 'int',
+            'float': 'float',
+            'str': 'string',
+          };
+          
+          if (typeMap[call.callee] && call.args.length > 0 && call.args[0].type === 'input') {
+            // It's like: i = int(input())
+            // Create a variable with the right type and attach input info
+            const inputNode = call.args[0] as IRInput;
+            return {
+              type: 'variable',
+              name: target,
+              dataType: typeMap[call.callee],
+              value: {
+                ...inputNode,
+                targetVar: target,
+                targetType: typeMap[call.callee],
+              },
+            } as IRVariable;
+          }
+        }
+        
+        // Check if value is raw input (no cast) - defaults to string
+        if (value.type === 'input') {
+          return {
+            type: 'variable',
+            name: target,
+            dataType: 'string',
+            value: {
+              ...value,
+              targetVar: target,
+              targetType: 'string',
+            } as IRInput,
+          } as IRVariable;
+        }
+        
         // Check if it's a new variable declaration
         if (!target.includes('.')) {
           return {

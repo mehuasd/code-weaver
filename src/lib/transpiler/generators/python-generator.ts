@@ -84,6 +84,21 @@ export class PythonGenerator {
 
   private generateVariable(node: IRVariable): string {
     const indent = this.getIndent();
+    
+    // Special case: variable initialized from input
+    if (node.value && isIRInput(node.value)) {
+      const input = node.value as IRInput;
+      const prompt = input.prompt ? `"${input.prompt}"` : '';
+      
+      if (node.dataType === 'int') {
+        return `${indent}${node.name} = int(input(${prompt}))`;
+      } else if (node.dataType === 'float') {
+        return `${indent}${node.name} = float(input(${prompt}))`;
+      } else {
+        return `${indent}${node.name} = input(${prompt})`;
+      }
+    }
+    
     const value = node.value ? this.generateExpression(node.value) : this.getDefaultValue(node.dataType);
     return `${indent}${node.name} = ${value}`;
   }

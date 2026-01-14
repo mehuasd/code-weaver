@@ -192,6 +192,21 @@ export class JavaGenerator {
     const indent = this.getIndent();
     const type = this.mapType(node.dataType);
     
+    // Special case: variable initialized from input
+    if (node.value && isIRInput(node.value)) {
+      const input = node.value as IRInput;
+      let code = '';
+      
+      if (input.prompt) {
+        code += `${indent}System.out.print("${input.prompt}");\n`;
+      }
+      
+      const method = node.dataType === 'int' ? 'nextInt()' :
+                    node.dataType === 'float' ? 'nextFloat()' : 'nextLine()';
+      code += `${indent}${type} ${node.name} = scanner.${method};`;
+      return code;
+    }
+    
     if (node.value) {
       return `${indent}${type} ${node.name} = ${this.generateExpression(node.value)};`;
     }
