@@ -173,6 +173,27 @@ export class CGenerator {
     const indent = this.getIndent();
     const type = this.mapType(node.dataType);
     
+    // Special case: variable initialized from input
+    if (node.value && isIRInput(node.value)) {
+      const input = node.value as IRInput;
+      let code = '';
+      
+      if (input.prompt) {
+        code += `${indent}printf("${input.prompt}");\n`;
+      }
+      
+      if (node.dataType === 'string') {
+        code += `${indent}char ${node.name}[256];\n`;
+        code += `${indent}scanf("%s", ${node.name});`;
+      } else {
+        const format = node.dataType === 'int' ? '%d' : 
+                      node.dataType === 'float' ? '%f' : '%s';
+        code += `${indent}${type} ${node.name};\n`;
+        code += `${indent}scanf("${format}", &${node.name});`;
+      }
+      return code;
+    }
+    
     if (node.dataType === 'string') {
       const value = node.value ? this.generateExpression(node.value) : '""';
       return `${indent}char ${node.name}[256] = ${value};`;

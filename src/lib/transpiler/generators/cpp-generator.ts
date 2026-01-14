@@ -170,6 +170,20 @@ export class CppGenerator {
     const indent = this.getIndent();
     const type = this.mapType(node.dataType);
     
+    // Special case: variable initialized from input
+    if (node.value && isIRInput(node.value)) {
+      const input = node.value as IRInput;
+      let code = '';
+      
+      if (input.prompt) {
+        code += `${indent}cout << "${input.prompt}";\n`;
+      }
+      
+      code += `${indent}${type} ${node.name};\n`;
+      code += `${indent}cin >> ${node.name};`;
+      return code;
+    }
+    
     if (node.value) {
       return `${indent}${type} ${node.name} = ${this.generateExpression(node.value)};`;
     }
@@ -479,6 +493,14 @@ export class CppGenerator {
     if (isIRIdentifier(node)) return this.generateIdentifier(node);
     if (isIRBinaryOp(node)) return this.generateBinaryOp(node);
     if (isIRCall(node)) return this.generateCall(node);
+    if (isIRInput(node)) {
+      // Input as expression - cin placeholder for assignment
+      const input = node as IRInput;
+      if (input.targetType === 'int' || input.targetType === 'float') {
+        return `0`; // Placeholder - actual input handled in variable generation
+      }
+      return `""`; // String placeholder
+    }
     if (node.type === 'unary_op') {
       const unary = node as IRUnaryOp;
       const operand = this.generateExpression(unary.operand);
