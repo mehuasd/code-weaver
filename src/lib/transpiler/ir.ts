@@ -9,6 +9,7 @@ export type IRNodeType =
   | 'else'
   | 'for'
   | 'while'
+  | 'switch'
   | 'return'
   | 'print'
   | 'input'
@@ -21,6 +22,7 @@ export type IRNodeType =
   | 'literal'
   | 'identifier'
   | 'comment'
+  | 'break'
   | 'block';
 
 export type DataType = 'int' | 'float' | 'double' | 'string' | 'bool' | 'void' | 'char' | 'auto';
@@ -91,6 +93,17 @@ export interface IRWhile extends IRNode {
   type: 'while';
   condition: IRNode;
   body: IRNode[];
+}
+
+export interface IRSwitch extends IRNode {
+  type: 'switch';
+  expression: IRNode;
+  cases: { value: IRNode; body: IRNode[] }[];
+  defaultBody?: IRNode[];
+}
+
+export interface IRBreak extends IRNode {
+  type: 'break';
 }
 
 export interface IRReturn extends IRNode {
@@ -217,4 +230,12 @@ export function isIRWhile(node: IRNode): node is IRWhile {
 
 export function isIRInput(node: IRNode): node is IRInput {
   return node.type === 'input';
+}
+
+export function isIRSwitch(node: IRNode): node is IRSwitch {
+  return node.type === 'switch';
+}
+
+export function isIRBreak(node: IRNode): node is IRBreak {
+  return node.type === 'break';
 }
