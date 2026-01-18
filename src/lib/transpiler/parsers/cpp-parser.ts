@@ -145,10 +145,10 @@ export class CppParser {
       const wordMatch = code.slice(i).match(/^[a-zA-Z_][a-zA-Z0-9_]*/);
       if (wordMatch) {
         const keywords = ['int', 'float', 'double', 'char', 'void', 'bool', 'auto',
-                         'if', 'else', 'for', 'while', 'return', 'class', 'struct',
-                         'public', 'private', 'protected', 'const', 'static', 'virtual',
-                         'new', 'delete', 'this', 'nullptr', 'true', 'false',
-                         'using', 'namespace', 'std', 'cout', 'cin', 'endl', 'string'];
+                         'if', 'else', 'for', 'while', 'switch', 'case', 'default', 'break',
+                         'return', 'class', 'struct', 'public', 'private', 'protected', 
+                         'const', 'static', 'virtual', 'new', 'delete', 'this', 'nullptr', 
+                         'true', 'false', 'using', 'namespace', 'std', 'cout', 'cin', 'endl', 'string'];
         const type = keywords.includes(wordMatch[0]) ? 'KEYWORD' : 'IDENTIFIER';
         tokens.push({ type, value: wordMatch[0] });
         i += wordMatch[0].length;
@@ -472,6 +472,12 @@ export class CppParser {
     if (this.match('KEYWORD', 'if')) return this.parseIf();
     if (this.match('KEYWORD', 'for')) return this.parseFor();
     if (this.match('KEYWORD', 'while')) return this.parseWhile();
+    if (this.match('KEYWORD', 'switch')) return this.parseSwitch();
+    if (this.match('KEYWORD', 'break')) {
+      this.advance();
+      this.consume('PUNCTUATION', ';');
+      return { type: 'break' } as IRNode;
+    }
     if (this.match('KEYWORD', 'return')) return this.parseReturn();
     
     // cout
@@ -494,6 +500,58 @@ export class CppParser {
     const expr = this.parseExpression();
     this.consume('PUNCTUATION', ';');
     return expr;
+  }
+  
+  private parseSwitch(): IRNode {
+    this.consume('KEYWORD', 'switch');
+    this.consume('PUNCTUATION', '(');
+    const expression = this.parseExpression();
+    this.consume('PUNCTUATION', ')');
+    this.consume('PUNCTUATION', '{');
+    
+    const cases: { value: IRNode; body: IRNode[] }[] = [];
+    let defaultBody: IRNode[] | undefined;
+    
+    while (!this.match('PUNCTUATION', '}') && this.pos < this.tokens.length) {
+      if (this.match('KEYWORD', 'case')) {
+        this.advance();
+        const value = this.parseExpression();
+        this.consume('PUNCTUATION', ':');
+        
+        const body: IRNode[] = [];
+        while (!this.match('KEYWORD', 'case') && !this.match('KEYWORD', 'default') && 
+               !this.match('PUNCTUATION', '}') && this.pos < this.tokens.length) {
+          if (this.match('KEYWORD', 'break')) {
+            this.advance();
+            this.consume('PUNCTUATION', ';');
+            break;
+          }
+          const stmt = this.parseStatement();
+          if (stmt) body.push(stmt);
+        }
+        cases.push({ value, body });
+      } else if (this.match('KEYWORD', 'default')) {
+        this.advance();
+        this.consume('PUNCTUATION', ':');
+        
+        defaultBody = [];
+        while (!this.match('KEYWORD', 'case') && !this.match('PUNCTUATION', '}') && this.pos < this.tokens.length) {
+          if (this.match('KEYWORD', 'break')) {
+            this.advance();
+            this.consume('PUNCTUATION', ';');
+            break;
+          }
+          const stmt = this.parseStatement();
+          if (stmt) defaultBody.push(stmt);
+        }
+      } else {
+        this.advance();
+      }
+    }
+    
+    this.consume('PUNCTUATION', '}');
+    
+    return { type: 'switch', expression, cases, defaultBody } as IRNode;
   }
 
   private parseIf(): IRIf {

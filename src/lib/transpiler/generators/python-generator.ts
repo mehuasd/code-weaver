@@ -7,6 +7,7 @@ import {
   IRIf,
   IRFor,
   IRWhile,
+  IRSwitch,
   IRReturn,
   IRPrint,
   IRInput,
@@ -33,6 +34,7 @@ import {
   isIRComment,
   isIRWhile,
   isIRInput,
+  isIRSwitch,
 } from '../ir';
 
 export class PythonGenerator {
@@ -63,6 +65,7 @@ export class PythonGenerator {
     if (isIRIf(node)) return this.generateIf(node);
     if (isIRFor(node)) return this.generateFor(node);
     if (isIRWhile(node)) return this.generateWhile(node);
+    if (isIRSwitch(node)) return this.generateSwitch(node);
     if (isIRReturn(node)) return this.generateReturn(node);
     if (isIRPrint(node)) return this.generatePrint(node);
     if (isIRInput(node)) return this.generateInput(node);
@@ -71,6 +74,7 @@ export class PythonGenerator {
     if (isIRBinaryOp(node)) return this.getIndent() + this.generateBinaryOp(node);
     if (isIRLiteral(node)) return this.getIndent() + this.generateLiteral(node);
     if (isIRIdentifier(node)) return this.getIndent() + this.generateIdentifier(node);
+    if (node.type === 'break') return `${this.getIndent()}break`;
     
     return '';
   }
@@ -311,6 +315,42 @@ export class PythonGenerator {
       code += `${this.getIndent()}pass\n`;
     }
     this.indent--;
+    
+    return code.trimEnd();
+  }
+
+  private generateSwitch(node: IRSwitch): string {
+    // Python 3.10+ has match-case, but we'll convert to if-elif for broader compatibility
+    const indent = this.getIndent();
+    const expr = this.generateExpression(node.expression);
+    let code = '';
+    
+    for (let i = 0; i < node.cases.length; i++) {
+      const c = node.cases[i];
+      const keyword = i === 0 ? 'if' : 'elif';
+      code += `${indent}${keyword} ${expr} == ${this.generateExpression(c.value)}:\n`;
+      this.indent++;
+      for (const stmt of c.body) {
+        if (stmt.type === 'break') continue; // Skip break in Python
+        const stmtCode = this.generateNode(stmt);
+        if (stmtCode) code += stmtCode + '\n';
+      }
+      if (c.body.filter(s => s.type !== 'break').length === 0) {
+        code += `${this.getIndent()}pass\n`;
+      }
+      this.indent--;
+    }
+    
+    if (node.defaultBody && node.defaultBody.length > 0) {
+      code += `${indent}else:\n`;
+      this.indent++;
+      for (const stmt of node.defaultBody) {
+        if (stmt.type === 'break') continue;
+        const stmtCode = this.generateNode(stmt);
+        if (stmtCode) code += stmtCode + '\n';
+      }
+      this.indent--;
+    }
     
     return code.trimEnd();
   }

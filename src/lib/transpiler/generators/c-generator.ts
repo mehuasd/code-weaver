@@ -7,6 +7,7 @@ import {
   IRIf,
   IRFor,
   IRWhile,
+  IRSwitch,
   IRReturn,
   IRPrint,
   IRInput,
@@ -24,6 +25,7 @@ import {
   isIRIf,
   isIRFor,
   isIRWhile,
+  isIRSwitch,
   isIRReturn,
   isIRPrint,
   isIRInput,
@@ -152,12 +154,14 @@ export class CGenerator {
     if (isIRIf(node)) return this.generateIf(node);
     if (isIRFor(node)) return this.generateFor(node);
     if (isIRWhile(node)) return this.generateWhile(node);
+    if (isIRSwitch(node)) return this.generateSwitch(node);
     if (isIRReturn(node)) return this.generateReturn(node);
     if (isIRPrint(node)) return this.generatePrint(node);
     if (isIRInput(node)) return this.generateInput(node);
     if (isIRAssignment(node)) return this.generateAssignment(node);
     if (isIRCall(node)) return `${this.getIndent()}${this.generateCall(node)};`;
     if (isIRBinaryOp(node)) return `${this.getIndent()}${this.generateBinaryOp(node)};`;
+    if (node.type === 'break') return `${this.getIndent()}break;`;
     
     return '';
   }
@@ -433,6 +437,36 @@ export class CGenerator {
     this.indent--;
     code += `${indent}}`;
     
+    return code;
+  }
+
+  private generateSwitch(node: IRSwitch): string {
+    const indent = this.getIndent();
+    const expr = this.generateExpression(node.expression);
+    let code = `${indent}switch (${expr}) {\n`;
+    
+    for (const c of node.cases) {
+      code += `${indent}    case ${this.generateExpression(c.value)}:\n`;
+      this.indent += 2;
+      for (const stmt of c.body) {
+        const stmtCode = this.generateNode(stmt);
+        if (stmtCode) code += stmtCode + '\n';
+      }
+      code += `${this.getIndent()}break;\n`;
+      this.indent -= 2;
+    }
+    
+    if (node.defaultBody) {
+      code += `${indent}    default:\n`;
+      this.indent += 2;
+      for (const stmt of node.defaultBody) {
+        const stmtCode = this.generateNode(stmt);
+        if (stmtCode) code += stmtCode + '\n';
+      }
+      this.indent -= 2;
+    }
+    
+    code += `${indent}}`;
     return code;
   }
 
