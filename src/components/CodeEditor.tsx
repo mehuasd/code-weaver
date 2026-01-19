@@ -129,7 +129,7 @@ export function CodeEditor({
   return (
     <div className={cn('code-editor relative flex h-full overflow-hidden', className)}>
       {/* Line numbers */}
-      <div className="flex-shrink-0 select-none bg-code-bg border-r border-border/30 px-3 py-4 text-right font-mono text-sm text-code-line">
+      <div className="flex-shrink-0 select-none bg-code-bg border-r border-border/30 px-3 py-4 text-right font-mono text-sm text-code-line overflow-y-auto scrollbar-thin">
         {lineNumbers.map((num) => (
           <div key={num} className="leading-6">
             {num}
@@ -139,14 +139,15 @@ export function CodeEditor({
       </div>
 
       {/* Code area */}
-      <div className="relative flex-1 overflow-hidden">
+      <div className="relative flex-1 overflow-auto scrollbar-thin">
         {/* Syntax highlighted layer */}
         <pre
           ref={highlightRef}
-          className="absolute inset-0 overflow-auto p-4 font-mono text-sm leading-6 pointer-events-none scrollbar-thin"
+          className="absolute inset-0 overflow-auto p-4 font-mono text-sm leading-6 pointer-events-none scrollbar-thin whitespace-pre"
           aria-hidden="true"
         >
           <code
+            className="whitespace-pre"
             dangerouslySetInnerHTML={{ __html: highlightCode(value) || `<span class="text-muted-foreground">${placeholder}</span>` }}
           />
         </pre>
@@ -160,8 +161,9 @@ export function CodeEditor({
           onKeyDown={handleKeyDown}
           readOnly={readOnly}
           spellCheck={false}
+          wrap="off"
           className={cn(
-            'absolute inset-0 w-full h-full p-4 font-mono text-sm leading-6 bg-transparent text-transparent caret-primary resize-none outline-none scrollbar-thin',
+            'absolute inset-0 w-full h-full p-4 font-mono text-sm leading-6 bg-transparent text-transparent caret-primary resize-none outline-none scrollbar-thin whitespace-pre overflow-auto',
             readOnly && 'cursor-default'
           )}
           placeholder=""

@@ -569,9 +569,9 @@ export class JavaGenerator {
       'string': 'String',
       'bool': 'boolean',
       'void': 'void',
-      'auto': isReturnType ? 'void' : (isParam ? 'String' : 'Object'), // No var for params or returns
+      'auto': isReturnType ? 'void' : 'int', // Default to int for unknown types (most common numeric case)
     };
-    return typeMap[type] || 'Object';
+    return typeMap[type] || 'int';
   }
 
   private getDefaultValue(type: DataType): string {
