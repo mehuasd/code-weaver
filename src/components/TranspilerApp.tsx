@@ -171,11 +171,22 @@ export function TranspilerApp() {
             return (
               <div
                 key={lang}
-                className="flex flex-col bg-[#2d2d2d] border border-[#3d3d3d] rounded-lg overflow-hidden min-h-[400px]"
+                className={cn(
+                  "flex flex-col rounded-lg overflow-hidden min-h-[400px] border transition-all",
+                  isSource 
+                    ? "bg-[#1a2a2a] border-[#00bcd4]/50 ring-1 ring-[#00bcd4]/30" 
+                    : "bg-[#2d2d2d] border-[#3d3d3d]"
+                )}
               >
                 {/* Panel Header */}
-                <div className="flex items-center justify-between px-4 py-2 border-b border-[#3d3d3d]">
-                  <span className="font-semibold text-foreground">
+                <div className={cn(
+                  "flex items-center justify-between px-4 py-2 border-b",
+                  isSource ? "border-[#00bcd4]/30 bg-[#00bcd4]/10" : "border-[#3d3d3d]"
+                )}>
+                  <span className={cn(
+                    "font-semibold",
+                    isSource ? "text-[#00bcd4]" : "text-foreground"
+                  )}>
                     {languageLabels[lang]}
                   </span>
                   <span className={cn(

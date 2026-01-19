@@ -678,7 +678,7 @@ export class CGenerator {
       'string': 'char*',
       'bool': 'bool',
       'void': 'void',
-      'auto': isParam ? 'const char*' : 'int', // Assume string params by default
+      'auto': 'int', // Default to int for unknown types (most common numeric case)
     };
     return typeMap[type] || 'int';
   }

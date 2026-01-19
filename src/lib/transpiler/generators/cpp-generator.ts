@@ -596,9 +596,9 @@ export class CppGenerator {
       'string': 'string',
       'bool': 'bool',
       'void': 'void',
-      'auto': isParam ? 'string' : 'auto', // Use string for params, auto for vars
+      'auto': 'int', // Default to int for unknown types (most common numeric case)
     };
-    return typeMap[type] || 'auto';
+    return typeMap[type] || 'int';
   }
 
   private getDefaultValue(type: DataType): string {
