@@ -13,6 +13,10 @@ export interface ExecutionResult {
   exitCode: number;
 }
 
+async function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 export async function executeCode(code: string, language: string): Promise<ExecutionResult> {
   const config = languageConfig[language];
   if (!config) throw new Error(`Unsupported language: ${language}`);
@@ -46,20 +50,28 @@ export async function executeAllCode(
 ): Promise<Record<string, ExecutionResult>> {
   const results: Record<string, ExecutionResult> = {};
 
-  const promises = Object.entries(codes)
-    .filter(([, code]) => code && !code.startsWith('//'))
-    .map(async ([lang, code]) => {
-      try {
-        results[lang] = await executeCode(code, lang);
-      } catch (error) {
-        results[lang] = {
-          output: '',
-          error: error instanceof Error ? error.message : 'Execution failed',
-          exitCode: -1,
-        };
-      }
-    });
+  const entries = Object.entries(codes)
+    .filter(([, code]) => code && !code.startsWith('//'));
 
-  await Promise.all(promises);
+  // Execute sequentially with 250ms delay to respect rate limit (1 req per 200ms)
+  for (let i = 0; i < entries.length; i++) {
+    const [lang, code] = entries[i];
+
+    try {
+      results[lang] = await executeCode(code, lang);
+    } catch (error) {
+      results[lang] = {
+        output: '',
+        error: error instanceof Error ? error.message : 'Execution failed',
+        exitCode: -1,
+      };
+    }
+
+    // Wait between requests to avoid rate limiting
+    if (i < entries.length - 1) {
+      await delay(250);
+    }
+  }
+
   return results;
 }
