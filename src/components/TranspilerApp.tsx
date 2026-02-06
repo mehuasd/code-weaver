@@ -1,8 +1,9 @@
 import { useState, useCallback } from 'react';
-import { Zap } from 'lucide-react';
-import { CodeEditor } from './CodeEditor';
-import { OutputPanel } from './OutputPanel';
+import { Zap, ShieldCheck, Play } from 'lucide-react';
+import { CodePanel } from './CodePanel';
 import { transpiler, Language, TranspileResult } from '@/lib/transpiler';
+import { verifyAllCode, VerifyResult } from '@/lib/api/cohere';
+import { executeAllCode, ExecutionResult } from '@/lib/api/piston';
 import { cn } from '@/lib/utils';
 import {
   Select,
@@ -79,23 +80,34 @@ const languageLabels: Record<Language, string> = {
   java: 'Java',
 };
 
+const allLanguages: Language[] = ['python', 'c', 'cpp', 'java'];
+
 export function TranspilerApp() {
   const [sourceLanguage, setSourceLanguage] = useState<Language>('python');
   const [sourceCode, setSourceCode] = useState(sampleCode.python);
   const [result, setResult] = useState<TranspileResult | null>(null);
   const [isTranspiling, setIsTranspiling] = useState(false);
 
+  // Verification & Execution state
+  const [verifyResults, setVerifyResults] = useState<Record<string, VerifyResult>>({});
+  const [execResults, setExecResults] = useState<Record<string, ExecutionResult>>({});
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
+
   const handleLanguageChange = (lang: Language) => {
     setSourceLanguage(lang);
     setSourceCode(sampleCode[lang]);
     setResult(null);
+    setVerifyResults({});
+    setExecResults({});
   };
 
   const handleTranspile = useCallback(() => {
     if (!sourceCode.trim()) return;
-
     setIsTranspiling(true);
-    
+    setVerifyResults({});
+    setExecResults({});
+
     setTimeout(() => {
       const transpileResult = transpiler.transpile(sourceCode, sourceLanguage);
       setResult(transpileResult);
@@ -103,7 +115,58 @@ export function TranspilerApp() {
     }, 300);
   }, [sourceCode, sourceLanguage]);
 
-  const allLanguages: Language[] = ['python', 'c', 'cpp', 'java'];
+  const handleVerify = useCallback(async () => {
+    if (!result) return;
+    setIsVerifying(true);
+
+    const codes: Record<string, string> = {};
+    for (const lang of allLanguages) {
+      if (lang !== sourceLanguage) {
+        const code = result[lang];
+        if (code && !code.startsWith('//')) {
+          codes[lang] = code;
+        }
+      }
+    }
+
+    try {
+      const results = await verifyAllCode(codes, sourceLanguage);
+      setVerifyResults(results);
+    } catch (error) {
+      console.error('Verification error:', error);
+    } finally {
+      setIsVerifying(false);
+    }
+  }, [result, sourceLanguage]);
+
+  const handleRunAll = useCallback(async () => {
+    if (!result) return;
+    setIsRunning(true);
+
+    const codes: Record<string, string> = {};
+    // Source code
+    codes[sourceLanguage] = sourceCode;
+    // Output codes (use verified versions if available)
+    for (const lang of allLanguages) {
+      if (lang !== sourceLanguage) {
+        const verifiedCode = verifyResults[lang]?.correctedCode;
+        const originalCode = result[lang];
+        const code = verifiedCode || originalCode;
+        if (code && !code.startsWith('//')) {
+          codes[lang] = code;
+        }
+      }
+    }
+
+    try {
+      const results = await executeAllCode(codes);
+      setExecResults(results);
+    } catch (error) {
+      console.error('Execution error:', error);
+    } finally {
+      setIsRunning(false);
+    }
+  }, [result, sourceLanguage, sourceCode, verifyResults]);
 
   return (
     <div className="min-h-screen bg-[#1e1e1e]">
@@ -117,10 +180,10 @@ export function TranspilerApp() {
         </p>
       </header>
 
-      {/* Source Language Selector & Translate Button */}
+      {/* Action Buttons */}
       <div className="flex flex-col items-center gap-3 mb-6">
         <span className="text-sm text-muted-foreground">Source Language</span>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center justify-center gap-3">
           <Select value={sourceLanguage} onValueChange={(val) => handleLanguageChange(val as Language)}>
             <SelectTrigger className="w-[180px] bg-[#2d2d2d] border-border">
               <SelectValue placeholder="Select language" />
@@ -133,12 +196,13 @@ export function TranspilerApp() {
               ))}
             </SelectContent>
           </Select>
-          
+
+          {/* Translate Button */}
           <button
             onClick={handleTranspile}
             disabled={!sourceCode.trim() || isTranspiling}
             className={cn(
-              'flex items-center justify-center gap-2 px-6 py-2 rounded-md font-medium transition-all',
+              'flex items-center justify-center gap-2 px-5 py-2 rounded-md font-medium transition-all text-sm',
               sourceCode.trim() && !isTranspiling
                 ? 'bg-[#00bcd4] text-black hover:bg-[#00acc1]'
                 : 'bg-[#2d2d2d] text-muted-foreground cursor-not-allowed'
@@ -152,7 +216,55 @@ export function TranspilerApp() {
             ) : (
               <>
                 <Zap className="w-4 h-4" />
-                <span>Translate to All Languages</span>
+                <span>Translate All</span>
+              </>
+            )}
+          </button>
+
+          {/* Verify Button */}
+          <button
+            onClick={handleVerify}
+            disabled={!result || isVerifying}
+            className={cn(
+              'flex items-center justify-center gap-2 px-5 py-2 rounded-md font-medium transition-all text-sm',
+              result && !isVerifying
+                ? 'bg-yellow-500 text-black hover:bg-yellow-400'
+                : 'bg-[#2d2d2d] text-muted-foreground cursor-not-allowed'
+            )}
+          >
+            {isVerifying ? (
+              <>
+                <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                <span>Verifying...</span>
+              </>
+            ) : (
+              <>
+                <ShieldCheck className="w-4 h-4" />
+                <span>Verify & Fix</span>
+              </>
+            )}
+          </button>
+
+          {/* Run All Button */}
+          <button
+            onClick={handleRunAll}
+            disabled={!result || isRunning}
+            className={cn(
+              'flex items-center justify-center gap-2 px-5 py-2 rounded-md font-medium transition-all text-sm',
+              result && !isRunning
+                ? 'bg-green-500 text-black hover:bg-green-400'
+                : 'bg-[#2d2d2d] text-muted-foreground cursor-not-allowed'
+            )}
+          >
+            {isRunning ? (
+              <>
+                <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                <span>Running...</span>
+              </>
+            ) : (
+              <>
+                <Play className="w-4 h-4" />
+                <span>Run All</span>
               </>
             )}
           </button>
@@ -165,91 +277,27 @@ export function TranspilerApp() {
           {allLanguages.map((lang) => {
             const isSource = lang === sourceLanguage;
             const code = isSource ? sourceCode : (result?.[lang] || '');
-            const isUnsupported = code === '// C does not support classes' || 
+            const isUnsupported = code === '// C does not support classes' ||
                                   code === '// C does not support this feature';
-            
+
             return (
-              <div
+              <CodePanel
                 key={lang}
-                className={cn(
-                  "flex flex-col rounded-lg overflow-hidden min-h-[400px] border transition-all",
-                  isSource 
-                    ? "bg-[#1a2a2a] border-[#00bcd4]/50 ring-1 ring-[#00bcd4]/30" 
-                    : "bg-[#2d2d2d] border-[#3d3d3d]"
-                )}
-              >
-                {/* Panel Header */}
-                <div className={cn(
-                  "flex items-center justify-between px-4 py-2 border-b",
-                  isSource ? "border-[#00bcd4]/30 bg-[#00bcd4]/10" : "border-[#3d3d3d]"
-                )}>
-                  <span className={cn(
-                    "font-semibold",
-                    isSource ? "text-[#00bcd4]" : "text-foreground"
-                  )}>
-                    {languageLabels[lang]}
-                  </span>
-                  <span className={cn(
-                    'px-2 py-0.5 rounded text-xs font-medium',
-                    isSource 
-                      ? 'bg-[#00bcd4] text-black' 
-                      : 'bg-[#3d3d3d] text-muted-foreground'
-                  )}>
-                    {isSource ? 'Source' : 'Output'}
-                  </span>
-                </div>
-                
-                {/* Code Area */}
-                <div className="flex-1 overflow-hidden">
-                  {isUnsupported ? (
-                    <div className="h-full flex items-center justify-center text-muted-foreground p-4 text-center">
-                      {code.replace('// ', '')}
-                    </div>
-                  ) : (
-                    <CodeEditor
-                      value={isSource ? sourceCode : code}
-                      onChange={isSource ? setSourceCode : undefined}
-                      language={lang}
-                      readOnly={!isSource}
-                      placeholder={isSource ? "Enter your code here..." : ""}
-                      className="h-full"
-                    />
-                  )}
-                </div>
-                
-                {/* Copy Button */}
-                <CopyButton code={isSource ? sourceCode : code} disabled={!code || isUnsupported} />
-              </div>
+                language={lang}
+                languageLabel={languageLabels[lang]}
+                code={code}
+                isSource={isSource}
+                isUnsupported={isUnsupported}
+                onChange={isSource ? setSourceCode : undefined}
+                verifyResult={!isSource ? verifyResults[lang] : undefined}
+                executionResult={execResults[lang]}
+                isVerifying={!isSource && isVerifying}
+                isRunning={isRunning}
+              />
             );
           })}
         </div>
       </div>
     </div>
-  );
-}
-
-function CopyButton({ code, disabled }: { code: string; disabled?: boolean }) {
-  const [copied, setCopied] = useState(false);
-  
-  const handleCopy = async () => {
-    if (!code || disabled) return;
-    await navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-  
-  return (
-    <button
-      onClick={handleCopy}
-      disabled={disabled}
-      className={cn(
-        'w-full py-2 text-sm font-medium border-t border-[#3d3d3d] transition-colors',
-        disabled
-          ? 'bg-[#2d2d2d] text-muted-foreground cursor-not-allowed'
-          : 'bg-[#3d3d3d] text-foreground hover:bg-[#4d4d4d]'
-      )}
-    >
-      {copied ? 'Copied!' : 'Copy Code'}
-    </button>
   );
 }
