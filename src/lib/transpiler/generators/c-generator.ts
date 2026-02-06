@@ -697,12 +697,14 @@ export class CGenerator {
 
   private inferType(node: IRNode): DataType {
     if (isIRLiteral(node)) return node.dataType;
-    if (isIRIdentifier(node)) return 'auto';
+    // Default identifiers to 'int' since most transpiled variables are numeric
+    // This prevents %s being used for int variables (which causes segfaults)
+    if (isIRIdentifier(node)) return 'int';
     if (isIRCall(node)) {
       if (node.callee === 'int') return 'int';
       if (node.callee === 'float') return 'float';
       if (node.callee === 'str') return 'string';
     }
-    return 'auto';
+    return 'int';
   }
 }

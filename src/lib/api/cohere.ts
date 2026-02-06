@@ -1,5 +1,4 @@
 // WARNING: API key stored client-side. Not recommended for production.
-// Consider using a backend service for secure API key management.
 const COHERE_API_KEY = 'blnyr0IUzFwtY43OS1xLvKZWcrYDqxWUOFsOlA6N';
 const COHERE_API_URL = 'https://api.cohere.com/v2/chat';
 
@@ -24,7 +23,7 @@ export async function verifyCode(code: string, language: string): Promise<Verify
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'command-r-plus',
+      model: 'command-a-03-2025',
       messages: [
         {
           role: 'user',
@@ -72,20 +71,25 @@ export async function verifyAllCode(
 ): Promise<Record<string, VerifyResult>> {
   const results: Record<string, VerifyResult> = {};
 
-  const promises = Object.entries(codes)
+  // Process sequentially with delay to avoid rate limits
+  const entries = Object.entries(codes)
     .filter(([lang]) => lang !== sourceLanguage)
-    .filter(([, code]) => code && !code.startsWith('//'))
-    .map(async ([lang, code]) => {
-      try {
-        results[lang] = await verifyCode(code, lang);
-      } catch (error) {
-        results[lang] = {
-          correctedCode: code,
-          issues: [`Verification failed: ${error instanceof Error ? error.message : 'Unknown error'}`],
-        };
-      }
-    });
+    .filter(([, code]) => code && !code.startsWith('//'));
 
-  await Promise.all(promises);
+  for (const [lang, code] of entries) {
+    try {
+      results[lang] = await verifyCode(code, lang);
+    } catch (error) {
+      results[lang] = {
+        correctedCode: code,
+        issues: [`Verification failed: ${error instanceof Error ? error.message : 'Unknown error'}`],
+      };
+    }
+    // Small delay between requests
+    if (entries.indexOf([lang, code] as any) < entries.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+  }
+
   return results;
 }
