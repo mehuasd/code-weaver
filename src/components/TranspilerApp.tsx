@@ -130,7 +130,7 @@ export function TranspilerApp() {
     }
 
     try {
-      const results = await verifyAllCode(codes, sourceLanguage);
+      const results = await verifyAllCode(codes, sourceCode, sourceLanguage);
       setVerifyResults(results);
     } catch (error) {
       console.error('Verification error:', error);
