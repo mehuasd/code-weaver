@@ -7,14 +7,20 @@ export interface VerifyResult {
   issues: string[];
 }
 
-export async function verifyCode(code: string, language: string): Promise<VerifyResult> {
+export async function verifyCode(
+  sourceCode: string,
+  sourceLanguage: string,
+  generatedCode: string,
+  targetLanguage: string
+): Promise<VerifyResult> {
   const langNames: Record<string, string> = {
     python: 'Python',
     c: 'C',
     cpp: 'C++',
     java: 'Java',
   };
-  const langName = langNames[language] || language;
+  const sourceLangName = langNames[sourceLanguage] || sourceLanguage;
+  const targetLangName = langNames[targetLanguage] || targetLanguage;
 
   const response = await fetch(COHERE_API_URL, {
     method: 'POST',
@@ -27,15 +33,25 @@ export async function verifyCode(code: string, language: string): Promise<Verify
       messages: [
         {
           role: 'user',
-          content: `You are a strict ${langName} code reviewer. Check this code for syntax errors, type mismatches, missing declarations, incorrect format specifiers, and logical errors.
+          content: `You are a strict code translation verifier. You are given original source code in ${sourceLangName} and its translation in ${targetLangName}. Your job is to verify that the ${targetLangName} code is a correct and equivalent translation of the ${sourceLangName} source code.
+
+Check for:
+1. Logic equivalence - does the translated code produce the same output as the source?
+2. Syntax errors in the translated code
+3. Missing functionality - anything in the source that's not in the translation
+4. Incorrect translations (wrong function calls, operators, etc.)
+5. Type mismatches, missing declarations, incorrect format specifiers
 
 IMPORTANT: Return ONLY a valid JSON object with no extra text, no markdown, no backticks:
-{"corrected_code": "the full corrected code here", "issues": ["issue 1", "issue 2"]}
+{"corrected_code": "the full corrected ${targetLangName} code here", "issues": ["issue 1", "issue 2"]}
 
-If the code is already correct, return it unchanged with an empty issues array.
+If the translation is already correct, return it unchanged with an empty issues array.
 
-Code to review:
-${code}`,
+Original ${sourceLangName} source code:
+${sourceCode}
+
+Translated ${targetLangName} code to verify:
+${generatedCode}`,
         },
       ],
     }),
@@ -54,7 +70,7 @@ ${code}`,
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
       return {
-        correctedCode: parsed.corrected_code || code,
+        correctedCode: parsed.corrected_code || generatedCode,
         issues: Array.isArray(parsed.issues) ? parsed.issues : [],
       };
     }
@@ -62,11 +78,12 @@ ${code}`,
     // JSON parsing failed, return original
   }
 
-  return { correctedCode: code, issues: [] };
+  return { correctedCode: generatedCode, issues: [] };
 }
 
 export async function verifyAllCode(
   codes: Record<string, string>,
+  sourceCode: string,
   sourceLanguage: string
 ): Promise<Record<string, VerifyResult>> {
   const results: Record<string, VerifyResult> = {};
@@ -78,7 +95,7 @@ export async function verifyAllCode(
 
   for (const [lang, code] of entries) {
     try {
-      results[lang] = await verifyCode(code, lang);
+      results[lang] = await verifyCode(sourceCode, sourceLanguage, code, lang);
     } catch (error) {
       results[lang] = {
         correctedCode: code,
