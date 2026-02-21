@@ -1,11 +1,10 @@
-const WANDBOX_API_URL = 'https://wandbox.org/api/compile/json';
+const CODEX_API_URL = 'https://api.codex.jaagrav.in';
 
-// Compiler names for Wandbox
-const compilerConfig: Record<string, string> = {
-  python: 'cpython-head',
-  c: 'gcc-head-c',
-  cpp: 'gcc-head',
-  java: 'openjdk-head',
+const languageMap: Record<string, string> = {
+  python: 'py',
+  c: 'c',
+  cpp: 'cpp',
+  java: 'java',
 };
 
 export interface ExecutionResult {
@@ -19,16 +18,16 @@ async function delay(ms: number): Promise<void> {
 }
 
 export async function executeCode(code: string, language: string): Promise<ExecutionResult> {
-  const compiler = compilerConfig[language];
-  if (!compiler) throw new Error(`Unsupported language: ${language}`);
+  const lang = languageMap[language];
+  if (!lang) throw new Error(`Unsupported language: ${language}`);
 
-  const response = await fetch(WANDBOX_API_URL, {
+  const response = await fetch(CODEX_API_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      compiler,
       code,
-      options: language === 'c' ? '' : '',
+      language: lang,
+      input: '',
     }),
   });
 
@@ -39,14 +38,10 @@ export async function executeCode(code: string, language: string): Promise<Execu
 
   const data = await response.json();
 
-  const stdout = data.program_message || '';
-  const compilerMsg = data.compiler_message || '';
-  const status = parseInt(data.status || '0', 10);
-
   return {
-    output: stdout,
-    error: status !== 0 ? (compilerMsg || 'Execution failed') : '',
-    exitCode: status,
+    output: data.output || '',
+    error: data.error || '',
+    exitCode: data.error ? 1 : 0,
   };
 }
 
