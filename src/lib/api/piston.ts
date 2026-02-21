@@ -1,10 +1,11 @@
-const PISTON_API_URL = 'https://emkc.org/api/v2/piston/execute';
+const JUDGE0_API_URL = 'https://judge0-ce.p.rapidapi.com/submissions';
 
-const languageConfig: Record<string, { language: string; version: string }> = {
-  python: { language: 'python', version: '3.10.0' },
-  c: { language: 'c', version: '10.2.0' },
-  cpp: { language: 'c++', version: '10.2.0' },
-  java: { language: 'java', version: '15.0.2' },
+// Language IDs for Judge0 CE
+const languageConfig: Record<string, number> = {
+  python: 71,  // Python 3
+  c: 50,       // C (GCC 9.2.0)
+  cpp: 54,     // C++ (GCC 9.2.0)
+  java: 62,    // Java (OpenJDK 13.0.1)
 };
 
 export interface ExecutionResult {
@@ -18,30 +19,47 @@ async function delay(ms: number): Promise<void> {
 }
 
 export async function executeCode(code: string, language: string): Promise<ExecutionResult> {
-  const config = languageConfig[language];
-  if (!config) throw new Error(`Unsupported language: ${language}`);
+  const langId = languageConfig[language];
+  if (!langId) throw new Error(`Unsupported language: ${language}`);
 
-  const response = await fetch(PISTON_API_URL, {
+  // Submit code
+  const submitResponse = await fetch(`${JUDGE0_API_URL}?base64_encoded=true&wait=true&fields=stdout,stderr,exit_code,status,compile_output`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-RapidAPI-Key': import.meta.env.VITE_RAPIDAPI_KEY || '',
+      'X-RapidAPI-Host': 'judge0-ce.p.rapidapi.com',
+    },
     body: JSON.stringify({
-      language: config.language,
-      version: config.version,
-      files: [{ content: code }],
+      language_id: langId,
+      source_code: btoa(unescape(encodeURIComponent(code))),
     }),
   });
 
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => 'Unknown error');
-    throw new Error(`Execution API error (${response.status}): ${errorText}`);
+  if (!submitResponse.ok) {
+    const errorText = await submitResponse.text().catch(() => 'Unknown error');
+    throw new Error(`Execution API error (${submitResponse.status}): ${errorText}`);
   }
 
-  const data = await response.json();
+  const data = await submitResponse.json();
+
+  const decode = (s: string | null) => {
+    if (!s) return '';
+    try {
+      return decodeURIComponent(escape(atob(s)));
+    } catch {
+      return s;
+    }
+  };
+
+  const stdout = decode(data.stdout);
+  const stderr = decode(data.stderr);
+  const compileErr = decode(data.compile_output);
 
   return {
-    output: data.run?.stdout || data.run?.output || '',
-    error: data.run?.stderr || data.compile?.stderr || '',
-    exitCode: data.run?.code ?? -1,
+    output: stdout,
+    error: stderr || compileErr || '',
+    exitCode: data.exit_code ?? (data.status?.id >= 6 ? 1 : 0),
   };
 }
 
@@ -53,7 +71,6 @@ export async function executeAllCode(
   const entries = Object.entries(codes)
     .filter(([, code]) => code && !code.startsWith('//'));
 
-  // Execute sequentially with 250ms delay to respect rate limit (1 req per 200ms)
   for (let i = 0; i < entries.length; i++) {
     const [lang, code] = entries[i];
 
@@ -67,9 +84,8 @@ export async function executeAllCode(
       };
     }
 
-    // Wait between requests to avoid rate limiting
     if (i < entries.length - 1) {
-      await delay(250);
+      await delay(500);
     }
   }
 
