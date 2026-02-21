@@ -1,11 +1,11 @@
-const JUDGE0_API_URL = 'https://judge0-ce.p.rapidapi.com/submissions';
+const WANDBOX_API_URL = 'https://wandbox.org/api/compile/json';
 
-// Language IDs for Judge0 CE
-const languageConfig: Record<string, number> = {
-  python: 71,  // Python 3
-  c: 50,       // C (GCC 9.2.0)
-  cpp: 54,     // C++ (GCC 9.2.0)
-  java: 62,    // Java (OpenJDK 13.0.1)
+// Compiler names for Wandbox
+const compilerConfig: Record<string, string> = {
+  python: 'cpython-head',
+  c: 'gcc-head-c',
+  cpp: 'gcc-head',
+  java: 'openjdk-head',
 };
 
 export interface ExecutionResult {
@@ -19,47 +19,34 @@ async function delay(ms: number): Promise<void> {
 }
 
 export async function executeCode(code: string, language: string): Promise<ExecutionResult> {
-  const langId = languageConfig[language];
-  if (!langId) throw new Error(`Unsupported language: ${language}`);
+  const compiler = compilerConfig[language];
+  if (!compiler) throw new Error(`Unsupported language: ${language}`);
 
-  // Submit code
-  const submitResponse = await fetch(`${JUDGE0_API_URL}?base64_encoded=true&wait=true&fields=stdout,stderr,exit_code,status,compile_output`, {
+  const response = await fetch(WANDBOX_API_URL, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-RapidAPI-Key': import.meta.env.VITE_RAPIDAPI_KEY || '',
-      'X-RapidAPI-Host': 'judge0-ce.p.rapidapi.com',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      language_id: langId,
-      source_code: btoa(unescape(encodeURIComponent(code))),
+      compiler,
+      code,
+      options: language === 'c' ? '' : '',
     }),
   });
 
-  if (!submitResponse.ok) {
-    const errorText = await submitResponse.text().catch(() => 'Unknown error');
-    throw new Error(`Execution API error (${submitResponse.status}): ${errorText}`);
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => 'Unknown error');
+    throw new Error(`Execution API error (${response.status}): ${errorText}`);
   }
 
-  const data = await submitResponse.json();
+  const data = await response.json();
 
-  const decode = (s: string | null) => {
-    if (!s) return '';
-    try {
-      return decodeURIComponent(escape(atob(s)));
-    } catch {
-      return s;
-    }
-  };
-
-  const stdout = decode(data.stdout);
-  const stderr = decode(data.stderr);
-  const compileErr = decode(data.compile_output);
+  const stdout = data.program_message || '';
+  const compilerMsg = data.compiler_message || '';
+  const status = parseInt(data.status || '0', 10);
 
   return {
     output: stdout,
-    error: stderr || compileErr || '',
-    exitCode: data.exit_code ?? (data.status?.id >= 6 ? 1 : 0),
+    error: status !== 0 ? (compilerMsg || 'Execution failed') : '',
+    exitCode: status,
   };
 }
 
