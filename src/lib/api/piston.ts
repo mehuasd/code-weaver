@@ -1,7 +1,8 @@
-const CODEX_API_URL = 'https://api.codex.jaagrav.in';
+const PAIZA_CREATE_URL = 'https://api.paiza.io/runners/create';
+const PAIZA_DETAILS_URL = 'https://api.paiza.io/runners/get_details';
 
 const languageMap: Record<string, string> = {
-  python: 'py',
+  python: 'python3',
   c: 'c',
   cpp: 'cpp',
   java: 'java',
@@ -17,31 +18,45 @@ async function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+async function pollResult(id: string, maxAttempts = 20): Promise<any> {
+  for (let i = 0; i < maxAttempts; i++) {
+    const res = await fetch(`${PAIZA_DETAILS_URL}?id=${id}&api_key=guest`);
+    if (!res.ok) throw new Error(`Poll error (${res.status})`);
+    const data = await res.json();
+    if (data.status === 'completed') return data;
+    await delay(1000);
+  }
+  throw new Error('Execution timed out');
+}
+
 export async function executeCode(code: string, language: string): Promise<ExecutionResult> {
   const lang = languageMap[language];
   if (!lang) throw new Error(`Unsupported language: ${language}`);
 
-  const response = await fetch(CODEX_API_URL, {
+  const formData = new URLSearchParams();
+  formData.append('source_code', code);
+  formData.append('language', lang);
+  formData.append('input', '');
+  formData.append('api_key', 'guest');
+
+  const createRes = await fetch(PAIZA_CREATE_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      code,
-      language: lang,
-      input: '',
-    }),
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: formData.toString(),
   });
 
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => 'Unknown error');
-    throw new Error(`Execution API error (${response.status}): ${errorText}`);
+  if (!createRes.ok) {
+    const errorText = await createRes.text().catch(() => 'Unknown error');
+    throw new Error(`Execution API error (${createRes.status}): ${errorText}`);
   }
 
-  const data = await response.json();
+  const createData = await createRes.json();
+  const result = await pollResult(createData.id);
 
   return {
-    output: data.output || '',
-    error: data.error || '',
-    exitCode: data.error ? 1 : 0,
+    output: result.stdout || '',
+    error: result.stderr || result.build_stderr || '',
+    exitCode: result.exit_code ?? (result.result === 'failure' ? 1 : 0),
   };
 }
 
