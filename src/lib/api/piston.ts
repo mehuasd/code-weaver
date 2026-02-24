@@ -1,4 +1,5 @@
-const PAIZA_CREATE_URL = 'https://api.paiza.io/runners/create';
+const CORS_PROXY = 'https://corsproxy.io/?';
+const PAIZA_CREATE_URL = `${CORS_PROXY}${encodeURIComponent('https://api.paiza.io/runners/create')}`;
 const PAIZA_DETAILS_URL = 'https://api.paiza.io/runners/get_details';
 
 const languageMap: Record<string, string> = {
@@ -20,7 +21,7 @@ async function delay(ms: number): Promise<void> {
 
 async function pollResult(id: string, maxAttempts = 20): Promise<any> {
   for (let i = 0; i < maxAttempts; i++) {
-    const res = await fetch(`${PAIZA_DETAILS_URL}?id=${id}&api_key=guest`);
+    const res = await fetch(`${CORS_PROXY}${encodeURIComponent(`${PAIZA_DETAILS_URL}?id=${id}&api_key=guest`)}`);
     if (!res.ok) throw new Error(`Poll error (${res.status})`);
     const data = await res.json();
     if (data.status === 'completed') return data;
