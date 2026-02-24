@@ -1,6 +1,4 @@
-const CORS_PROXY = 'https://corsproxy.io/?';
-const PAIZA_CREATE_URL = `${CORS_PROXY}${encodeURIComponent('https://api.paiza.io/runners/create')}`;
-const PAIZA_DETAILS_URL = 'https://api.paiza.io/runners/get_details';
+const PAIZA_BASE = 'https://api.paiza.io/runners';
 
 const languageMap: Record<string, string> = {
   python: 'python3',
@@ -19,9 +17,37 @@ async function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Dynamically load Puter.js for CORS-free fetch
+let puterLoaded = false;
+async function ensurePuter(): Promise<void> {
+  if (puterLoaded) return;
+  if (!(window as any).puter) {
+    await new Promise<void>((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://js.puter.com/v2/';
+      script.onload = () => { puterLoaded = true; resolve(); };
+      script.onerror = () => reject(new Error('Failed to load Puter.js'));
+      document.head.appendChild(script);
+    });
+  } else {
+    puterLoaded = true;
+  }
+}
+
+async function corsFetch(url: string, options?: RequestInit): Promise<Response> {
+  await ensurePuter();
+  const puter = (window as any).puter;
+  if (puter?.net?.fetch) {
+    return puter.net.fetch(url, options);
+  }
+  // Fallback to direct fetch
+  return fetch(url, options);
+}
+
 async function pollResult(id: string, maxAttempts = 20): Promise<any> {
+  const url = `${PAIZA_BASE}/get_details?id=${id}&api_key=guest`;
   for (let i = 0; i < maxAttempts; i++) {
-    const res = await fetch(`${CORS_PROXY}${encodeURIComponent(`${PAIZA_DETAILS_URL}?id=${id}&api_key=guest`)}`);
+    const res = await corsFetch(url);
     if (!res.ok) throw new Error(`Poll error (${res.status})`);
     const data = await res.json();
     if (data.status === 'completed') return data;
@@ -40,7 +66,7 @@ export async function executeCode(code: string, language: string): Promise<Execu
   formData.append('input', '');
   formData.append('api_key', 'guest');
 
-  const createRes = await fetch(PAIZA_CREATE_URL, {
+  const createRes = await corsFetch(`${PAIZA_BASE}/create`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: formData.toString(),
