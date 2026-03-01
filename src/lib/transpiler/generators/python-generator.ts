@@ -44,10 +44,22 @@ export class PythonGenerator {
   generate(ir: IRProgram): string {
     this.indent = 0;
     const lines: string[] = [];
+    let hasMainFunction = false;
     
     for (const node of ir.body) {
       const code = this.generateNode(node);
       if (code) lines.push(code);
+      // Track if we generated a def main()
+      if (isIRFunction(node) && node.name === 'main') {
+        hasMainFunction = true;
+      }
+    }
+    
+    // Add if __name__ == "__main__": main() guard when a main function exists
+    if (hasMainFunction) {
+      lines.push('');
+      lines.push('if __name__ == "__main__":');
+      lines.push('    main()');
     }
     
     return lines.join('\n');

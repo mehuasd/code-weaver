@@ -173,7 +173,7 @@ export function TranspilerApp() {
       {/* Header */}
       <header className="text-center py-6">
         <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-2">
-          Code Translator
+          Code Transpiler
         </h1>
         <p className="text-muted-foreground text-sm">
           Convert code between C, C++, Java, and Python with ease
