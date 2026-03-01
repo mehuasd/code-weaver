@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Code2, ArrowRight, Zap, RefreshCw, Play, FileCode, Braces, Hash, Coffee, ChevronRight, Shield, Gauge } from 'lucide-react';
+import { Code2, ArrowRight, Zap, RefreshCw, Play, FileCode, Braces, Hash, Coffee, ChevronRight, Shield, Gauge, Menu, X } from 'lucide-react';
 
 const languages = [
   { icon: FileCode, name: 'Python', color: 'text-yellow-400', sample: 'print("Hello World")' },
@@ -14,11 +15,72 @@ const steps = [
   { step: '3', title: 'Verify & Run', desc: 'AI-verify correctness, then execute all versions side by side.' },
 ];
 
+const navLinks = [
+  { label: 'Languages', href: '#languages' },
+  { label: 'Demo', href: '#demo' },
+  { label: 'How It Works', href: '#how-it-works' },
+  { label: 'Features', href: '#features' },
+];
+
 const Landing = () => {
   const navigate = useNavigate();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const scrollTo = (href: string) => {
+    setMobileMenuOpen(false);
+    const el = document.querySelector(href);
+    el?.scrollIntoView({ behavior: 'smooth' });
+  };
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
+      {/* Navbar */}
+      <nav className="sticky top-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-xl">
+        <div className="max-w-6xl mx-auto px-6 flex items-center justify-between h-16">
+          <button onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} className="flex items-center gap-2">
+            <Code2 className="w-6 h-6 text-primary" />
+            <span className="font-bold text-foreground text-lg">Code Transpiler</span>
+          </button>
+
+          {/* Desktop links */}
+          <div className="hidden md:flex items-center gap-6">
+            {navLinks.map(({ label, href }) => (
+              <button key={href} onClick={() => scrollTo(href)} className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+                {label}
+              </button>
+            ))}
+            <button
+              onClick={() => navigate('/app')}
+              className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90 transition-opacity"
+            >
+              Open App
+            </button>
+          </div>
+
+          {/* Mobile toggle */}
+          <button className="md:hidden text-foreground" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
+            {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+          </button>
+        </div>
+
+        {/* Mobile menu */}
+        {mobileMenuOpen && (
+          <div className="md:hidden border-t border-border/50 bg-background/95 backdrop-blur-xl px-6 py-4 flex flex-col gap-3">
+            {navLinks.map(({ label, href }) => (
+              <button key={href} onClick={() => scrollTo(href)} className="text-sm text-muted-foreground hover:text-foreground text-left transition-colors">
+                {label}
+              </button>
+            ))}
+            <button
+              onClick={() => { setMobileMenuOpen(false); navigate('/app'); }}
+              className="mt-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold text-center"
+            >
+              Open App
+            </button>
+          </div>
+        )}
+      </nav>
+
       {/* Hero Section */}
       <header className="flex-1 flex flex-col items-center justify-center px-6 text-center py-24">
         <div className="mb-8 relative">
@@ -49,7 +111,7 @@ const Landing = () => {
       </header>
 
       {/* Supported Languages */}
-      <section className="px-6 py-16 border-t border-border/50">
+      <section id="languages" className="px-6 py-16 border-t border-border/50">
         <div className="max-w-5xl mx-auto">
           <h2 className="text-2xl md:text-3xl font-bold text-foreground text-center mb-3">
             4 Languages, <span className="text-gradient-primary">One Click</span>
@@ -71,7 +133,7 @@ const Landing = () => {
       </section>
 
       {/* Demo Preview */}
-      <section className="px-6 py-16 border-t border-border/50">
+      <section id="demo" className="px-6 py-16 border-t border-border/50">
         <div className="max-w-5xl mx-auto">
           <h2 className="text-2xl md:text-3xl font-bold text-foreground text-center mb-3">
             See It In <span className="text-gradient-primary">Action</span>
@@ -82,7 +144,6 @@ const Landing = () => {
 
           <div className="glass-panel p-1 rounded-xl overflow-hidden">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-border/30 rounded-lg overflow-hidden">
-              {/* Input panel */}
               <div className="bg-card p-5">
                 <div className="flex items-center gap-2 mb-3">
                   <span className="px-2 py-0.5 rounded text-xs font-medium bg-primary text-primary-foreground">Source · Python</span>
@@ -92,8 +153,6 @@ const Landing = () => {
                   {'    '}<span className="syntax-function">print</span>(<span className="syntax-string">"Hello"</span>, <span className="syntax-variable">i</span>)
                 </pre>
               </div>
-
-              {/* Output panel */}
               <div className="bg-card p-5">
                 <div className="flex items-center gap-2 mb-3">
                   <span className="px-2 py-0.5 rounded text-xs font-medium bg-secondary text-secondary-foreground">Output · C++</span>
@@ -110,7 +169,7 @@ const Landing = () => {
       </section>
 
       {/* How It Works */}
-      <section className="px-6 py-16 border-t border-border/50">
+      <section id="how-it-works" className="px-6 py-16 border-t border-border/50">
         <div className="max-w-4xl mx-auto">
           <h2 className="text-2xl md:text-3xl font-bold text-foreground text-center mb-10">
             How It <span className="text-gradient-primary">Works</span>
@@ -131,7 +190,7 @@ const Landing = () => {
       </section>
 
       {/* Features */}
-      <section className="px-6 py-16 border-t border-border/50">
+      <section id="features" className="px-6 py-16 border-t border-border/50">
         <div className="max-w-4xl mx-auto">
           <h2 className="text-2xl md:text-3xl font-bold text-foreground text-center mb-10">
             Powerful <span className="text-gradient-primary">Features</span>
@@ -160,7 +219,7 @@ const Landing = () => {
       <section className="px-6 py-20 border-t border-border/50">
         <div className="max-w-2xl mx-auto text-center">
           <h2 className="text-2xl md:text-3xl font-bold text-foreground mb-4">
-            Ready to translate your code?
+            Ready to transpile your code?
           </h2>
           <p className="text-muted-foreground mb-8">
             No signup required. Start converting code in seconds.
