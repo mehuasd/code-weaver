@@ -47,7 +47,7 @@ export function CodePanel({
   return (
     <div
       className={cn(
-        "flex flex-col rounded-xl overflow-hidden min-h-[400px] border transition-all",
+        "flex flex-col rounded-xl overflow-hidden min-h-[400px] w-full border transition-all",
         isSource
           ? "bg-primary/5 border-primary/40 ring-1 ring-primary/20"
           : "bg-card border-border/50"

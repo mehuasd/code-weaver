@@ -175,54 +175,44 @@ export function TranspilerApp() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Top Nav Bar */}
-      <nav className="sticky top-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-xl">
-        <div className="max-w-[1600px] mx-auto px-4 flex items-center justify-between h-14">
-          <div className="flex items-center gap-3">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => navigate('/')}
-                  className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                  <span className="text-sm hidden sm:inline">Home</span>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>Back to landing page</TooltipContent>
-            </Tooltip>
+      {/* Back Button */}
+      <div className="max-w-[1600px] mx-auto px-4 pt-3">
+        <button
+          onClick={() => navigate('/')}
+          className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors text-sm"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span>Home</span>
+        </button>
+      </div>
 
-            <div className="w-px h-6 bg-border/50" />
+      {/* Centered Header */}
+      <div className="text-center py-6">
+        <h1 className="text-3xl font-bold text-foreground">Code Transpiler</h1>
+        <p className="text-muted-foreground text-sm mt-1">Convert code between C, C++, Java, and Python with ease</p>
 
-            <div className="flex items-center gap-2">
-              <Code2 className="w-5 h-5 text-primary" />
-              <span className="font-bold text-foreground">Code Transpiler</span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground hidden sm:inline mr-2">Source:</span>
-            <Select value={sourceLanguage} onValueChange={(val) => handleLanguageChange(val as Language)}>
-              <SelectTrigger className="w-[130px] h-9 bg-secondary border-border text-sm">
-                <SelectValue placeholder="Language" />
-              </SelectTrigger>
-              <SelectContent className="bg-card border-border">
-                {allLanguages.map((lang) => (
-                  <SelectItem key={lang} value={lang} className="hover:bg-secondary">
-                    {languageLabels[lang]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        <div className="flex items-center justify-center gap-2 mt-4">
+          <span className="text-xs text-muted-foreground mr-1">Source Language</span>
+          <Select value={sourceLanguage} onValueChange={(val) => handleLanguageChange(val as Language)}>
+            <SelectTrigger className="w-[140px] h-9 bg-secondary border-border text-sm">
+              <SelectValue placeholder="Language" />
+            </SelectTrigger>
+            <SelectContent className="bg-card border-border">
+              {allLanguages.map((lang) => (
+                <SelectItem key={lang} value={lang} className="hover:bg-secondary">
+                  {languageLabels[lang]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-      </nav>
+      </div>
 
       {/* Action Bar */}
       <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="flex items-center justify-center gap-3 py-4 border-b border-border/30"
+        className="flex items-center justify-center gap-3 pb-5"
       >
         <ActionButton
           onClick={handleTranspile}
@@ -253,9 +243,9 @@ export function TranspilerApp() {
         />
       </motion.div>
 
-      {/* 4 Panel Layout */}
-      <div className="px-4 py-6 max-w-[1600px] mx-auto">
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+      {/* 4 Panel Layout - equal height */}
+      <div className="px-4 pb-6 max-w-[1600px] mx-auto">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 auto-rows-fr">
           {allLanguages.map((lang, i) => {
             const isSource = lang === sourceLanguage;
             const code = isSource ? sourceCode : (result?.[lang] || '');
@@ -268,6 +258,7 @@ export function TranspilerApp() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.05 }}
+                className="flex"
               >
                 <CodePanel
                   language={lang}
