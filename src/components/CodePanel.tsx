@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Play, CheckCircle, AlertTriangle, Terminal } from 'lucide-react';
+import { CheckCircle, AlertTriangle, Terminal, Copy, Check } from 'lucide-react';
 import { CodeEditor } from './CodeEditor';
 import { cn } from '@/lib/utils';
 import type { Language } from '@/lib/transpiler';
@@ -47,20 +47,20 @@ export function CodePanel({
   return (
     <div
       className={cn(
-        "flex flex-col rounded-lg overflow-hidden min-h-[400px] border transition-all",
+        "flex flex-col rounded-xl overflow-hidden min-h-[400px] border transition-all",
         isSource
-          ? "bg-[#1a2a2a] border-[#00bcd4]/50 ring-1 ring-[#00bcd4]/30"
-          : "bg-[#2d2d2d] border-[#3d3d3d]"
+          ? "bg-primary/5 border-primary/40 ring-1 ring-primary/20"
+          : "bg-card border-border/50"
       )}
     >
       {/* Panel Header */}
       <div className={cn(
-        "flex items-center justify-between px-4 py-2 border-b",
-        isSource ? "border-[#00bcd4]/30 bg-[#00bcd4]/10" : "border-[#3d3d3d]"
+        "flex items-center justify-between px-4 py-2.5 border-b",
+        isSource ? "border-primary/30 bg-primary/10" : "border-border/30"
       )}>
         <span className={cn(
-          "font-semibold",
-          isSource ? "text-[#00bcd4]" : "text-foreground"
+          "font-semibold text-sm",
+          isSource ? "text-primary" : "text-foreground"
         )}>
           {languageLabel}
         </span>
@@ -80,12 +80,12 @@ export function CodePanel({
           <span className={cn(
             'px-2 py-0.5 rounded text-xs font-medium',
             isSource
-              ? 'bg-[#00bcd4] text-black'
+              ? 'bg-primary text-primary-foreground'
               : hasIssues
                 ? 'bg-yellow-500/20 text-yellow-400'
                 : isVerified
                   ? 'bg-green-500/20 text-green-400'
-                  : 'bg-[#3d3d3d] text-muted-foreground'
+                  : 'bg-secondary text-muted-foreground'
           )}>
             {isSource ? 'Source' : hasIssues ? 'Fixed' : isVerified ? 'Verified ✓' : 'Output'}
           </span>
@@ -127,8 +127,8 @@ export function CodePanel({
 
       {/* Execution Output */}
       {executionResult && (
-        <div className="border-t border-[#3d3d3d]">
-          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-[#252525] border-b border-[#3d3d3d]">
+        <div className="border-t border-border/30">
+          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary/50 border-b border-border/30">
             <Terminal className="w-3 h-3 text-muted-foreground" />
             <span className="text-xs text-muted-foreground font-medium">Output</span>
             {executionResult.exitCode === 0 && (
@@ -155,13 +155,23 @@ export function CodePanel({
         onClick={handleCopy}
         disabled={!displayCode || isUnsupported}
         className={cn(
-          'w-full py-2 text-sm font-medium border-t border-[#3d3d3d] transition-colors',
+          'flex items-center justify-center gap-1.5 w-full py-2 text-sm font-medium border-t border-border/30 transition-colors',
           !displayCode || isUnsupported
-            ? 'bg-[#2d2d2d] text-muted-foreground cursor-not-allowed'
-            : 'bg-[#3d3d3d] text-foreground hover:bg-[#4d4d4d]'
+            ? 'bg-secondary/30 text-muted-foreground cursor-not-allowed'
+            : 'bg-secondary/50 text-foreground hover:bg-secondary'
         )}
       >
-        {copied ? 'Copied!' : 'Copy Code'}
+        {copied ? (
+          <>
+            <Check className="w-3.5 h-3.5 text-green-400" />
+            <span className="text-green-400">Copied!</span>
+          </>
+        ) : (
+          <>
+            <Copy className="w-3.5 h-3.5" />
+            <span>Copy Code</span>
+          </>
+        )}
       </button>
     </div>
   );
